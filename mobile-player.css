@@ -146,7 +146,6 @@
   background: linear-gradient(to bottom, transparent, rgb(5 8 7 / 90%) 34%);
   color: #fff;
   opacity: 1;
-  transition: opacity 160ms ease;
 }
 
 .player-shell.controls-hidden .player-controls {
@@ -178,7 +177,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: clamp(3px, 1.3vw, 7px);
 }
 
 .control-button,
@@ -217,9 +216,9 @@
 }
 
 .mode-button {
-  min-width: 88px;
-  padding: 0 10px;
-  font-size: 12px;
+  min-width: 76px;
+  padding: 0 7px;
+  font-size: 11px;
 }
 
 .mode-button[aria-pressed="true"] {
@@ -229,9 +228,9 @@
 }
 
 .speed-control select {
-  width: 68px;
-  padding: 0 7px;
-  font-size: 12px;
+  width: 60px;
+  padding: 0 5px;
+  font-size: 11px;
 }
 
 .visually-hidden {
@@ -252,13 +251,13 @@
   background: var(--paper);
   color: var(--ink);
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .transcript-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
 }
 
@@ -267,21 +266,28 @@
   font-size: 22px;
 }
 
-.auto-next-control {
-  min-height: 38px;
+.player-auto-next {
+  height: 42px;
+  min-width: 57px;
+  padding: 0 6px;
+  border: 1px solid #64736b;
+  border-radius: 6px;
+  background: rgb(20 29 25 / 90%);
   display: flex;
   align-items: center;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+  justify-content: center;
+  gap: 4px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
 }
 
-.auto-next-control input {
-  width: 18px;
-  height: 18px;
+.player-auto-next input {
+  width: 15px;
+  height: 15px;
   margin: 0;
-  accent-color: var(--green);
+  accent-color: #4bb396;
 }
 
 .transcript-list {
@@ -295,7 +301,7 @@
 .transcript-row {
   width: 100%;
   min-height: 70px;
-  padding: 10px 7px;
+  padding: 13px 7px 11px;
   border: 0;
   border-bottom: 1px solid var(--line);
   background: transparent;
@@ -325,7 +331,19 @@
 .transcript-row-copy strong {
   overflow-wrap: anywhere;
   font-size: 15px;
-  line-height: 1.45;
+  line-height: 1.75;
+}
+
+.transcript-row-copy ruby {
+  margin-right: 1px;
+  ruby-align: center;
+}
+
+.transcript-row-copy rt {
+  color: var(--muted);
+  font-size: 0.55em;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .transcript-row-copy span {
@@ -338,6 +356,38 @@
 .transcript-row.is-active {
   background: var(--green-soft);
   box-shadow: inset 3px 0 0 var(--green);
+}
+
+@media (max-width: 360px) {
+  .player-controls {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .control-button {
+    width: 34px;
+  }
+
+  .play-button {
+    width: 44px;
+  }
+
+  .mode-button {
+    min-width: 64px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
+
+  .speed-control select {
+    width: 52px;
+    padding: 0 2px;
+  }
+
+  .player-auto-next {
+    min-width: 48px;
+    padding: 0 3px;
+    font-size: 9px;
+  }
 }
 
 .player-error {
@@ -379,7 +429,7 @@
 
   .player-layout {
     height: 100dvh;
-    grid-template-columns: minmax(0, 3fr) minmax(290px, 2fr);
+    grid-template-columns: minmax(0, 1.1fr) minmax(340px, 1fr);
     grid-template-rows: minmax(0, 1fr);
   }
 

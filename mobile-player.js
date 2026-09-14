@@ -21,6 +21,7 @@
     forwardButton: document.querySelector("#forwardButton"),
     repeatButton: document.querySelector("#repeatButton"),
     speedSelect: document.querySelector("#speedSelect"),
+    playerControls: document.querySelector("#playerControls"),
     timeline: document.querySelector("#timeline"),
     currentTime: document.querySelector("#currentTime"),
     duration: document.querySelector("#duration"),
@@ -49,6 +50,9 @@
   let seeking = false;
   let playbackIntent = false;
   let ignorePlayClick = false;
+  let controlsInteracting = false;
+  let repeatWasPlaying = false;
+  let speedWasPlaying = false;
 
   function requestResult(request) {
     return new Promise((resolve, reject) => {
@@ -211,6 +215,30 @@
     return String(segment?.chinese_text || segment?.chinese || segment?.translation || "").trim();
   }
 
+  function appendAnnotatedText(container, segment) {
+    const tokens = Array.isArray(segment.tokens) ? segment.tokens : [];
+    if (!tokens.length) {
+      container.textContent = japaneseText(segment);
+      return;
+    }
+    tokens.forEach((token) => {
+      const surface = String(token.surface || "");
+      const reading = String(token.reading || "");
+      const hasKanji = /[\u3400-\u9fff々〆ヵヶ]/u.test(surface);
+      if (!token.is_punctuation && hasKanji && reading && reading !== surface) {
+        const ruby = document.createElement("ruby");
+        ruby.append(document.createTextNode(surface));
+        const rt = document.createElement("rt");
+        rt.textContent = reading;
+        ruby.append(rt);
+        container.append(ruby);
+      } else {
+        container.append(document.createTextNode(surface));
+      }
+    });
+    if (!container.textContent.trim()) container.textContent = japaneseText(segment);
+  }
+
   function normalizedSegments(transcript) {
     const raw = Array.isArray(transcript?.segments) ? transcript.segments : [];
     return raw.filter((segment) => Number.isFinite(Number(segment?.start))
@@ -281,7 +309,7 @@
       const copy = document.createElement("span");
       copy.className = "transcript-row-copy";
       const japanese = document.createElement("strong");
-      japanese.textContent = japaneseText(segment);
+      appendAnnotatedText(japanese, segment);
       const chinese = document.createElement("span");
       chinese.textContent = chineseText(segment);
       copy.append(japanese, chinese);
@@ -300,11 +328,24 @@
   function showControls() {
     window.clearTimeout(controlsTimer);
     elements.playerShell.classList.remove("controls-hidden");
-    if (!elements.video.paused || playbackIntent) {
+    if (!controlsInteracting && (!elements.video.paused || playbackIntent)) {
       controlsTimer = window.setTimeout(() => {
         elements.playerShell.classList.add("controls-hidden");
       }, CONTROLS_HIDE_DELAY);
     }
+  }
+
+  function holdControls() {
+    controlsInteracting = true;
+    window.clearTimeout(controlsTimer);
+    elements.playerShell.classList.remove("controls-hidden");
+  }
+
+  function releaseControls(event) {
+    if (!controlsInteracting) return;
+    if (event?.type === "pointerup" && event.target === elements.speedSelect) return;
+    controlsInteracting = false;
+    showControls();
   }
 
   function syncPlaybackButton(isPlaying) {
@@ -479,6 +520,9 @@
   elements.playButton.addEventListener("click", handlePlayClick);
   elements.backButton.addEventListener("click", () => skip(-1));
   elements.forwardButton.addEventListener("click", () => skip(1));
+  elements.repeatButton.addEventListener("pointerdown", () => {
+    repeatWasPlaying = playbackIntent || !elements.video.paused;
+  });
   elements.repeatButton.addEventListener("click", () => {
     repeatEnabled = !repeatEnabled;
     repeatIndex = repeatEnabled ? nearestSegmentIndex(elements.video.currentTime) : -1;
@@ -487,17 +531,26 @@
       showToast("当前位置没有可循环的字幕");
     }
     elements.repeatButton.setAttribute("aria-pressed", String(repeatEnabled));
+    if (repeatWasPlaying && elements.video.paused) setPlayback(true);
+    repeatWasPlaying = false;
     showControls();
   });
   elements.speedSelect.value = readSetting(SPEED_KEY, "1");
   if (![...elements.speedSelect.options].some((option) => option.value === elements.speedSelect.value)) {
     elements.speedSelect.value = "1";
   }
+  elements.speedSelect.addEventListener("pointerdown", () => {
+    speedWasPlaying = playbackIntent || !elements.video.paused;
+  });
   elements.speedSelect.addEventListener("change", () => {
     elements.video.playbackRate = Number(elements.speedSelect.value) || 1;
     writeSetting(SPEED_KEY, elements.speedSelect.value);
+    if (speedWasPlaying && elements.video.paused) setPlayback(true);
+    speedWasPlaying = false;
+    releaseControls();
     showControls();
   });
+  elements.speedSelect.addEventListener("blur", releaseControls);
   elements.autoNext.checked = readSetting(AUTO_NEXT_KEY, "false") === "true";
   elements.autoNext.addEventListener("change", () => writeSetting(AUTO_NEXT_KEY, elements.autoNext.checked));
   elements.timeline.addEventListener("pointerdown", () => { seeking = true; });
@@ -537,14 +590,16 @@
     savePlayback(false);
   });
   elements.video.addEventListener("ended", handleEnded);
+  elements.playerControls.addEventListener("pointerdown", holdControls);
+  window.addEventListener("pointerup", releaseControls);
+  window.addEventListener("pointercancel", releaseControls);
   elements.playerShell.addEventListener("pointermove", showControls);
   elements.playerShell.addEventListener("pointerleave", () => {
-    if (!elements.video.paused) elements.playerShell.classList.add("controls-hidden");
+    if (!elements.video.paused && !controlsInteracting) elements.playerShell.classList.add("controls-hidden");
   });
   elements.playerShell.addEventListener("click", (event) => {
     if (event.target.closest(".player-controls")) return;
-    if (elements.playerShell.classList.contains("controls-hidden")) showControls();
-    else togglePlayback(event);
+    showControls();
   });
   elements.fullscreenButton.addEventListener("click", async () => {
     try {
