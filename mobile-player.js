@@ -20,7 +20,9 @@
     backButton: document.querySelector("#backButton"),
     forwardButton: document.querySelector("#forwardButton"),
     repeatButton: document.querySelector("#repeatButton"),
-    speedSelect: document.querySelector("#speedSelect"),
+    speedControl: document.querySelector("#speedControl"),
+    speedButton: document.querySelector("#speedButton"),
+    speedMenu: document.querySelector("#speedMenu"),
     playerControls: document.querySelector("#playerControls"),
     timeline: document.querySelector("#timeline"),
     currentTime: document.querySelector("#currentTime"),
@@ -53,6 +55,7 @@
   let controlsInteracting = false;
   let repeatWasPlaying = false;
   let speedWasPlaying = false;
+  let playbackSpeed = 1;
 
   function requestResult(request) {
     return new Promise((resolve, reject) => {
@@ -343,9 +346,32 @@
 
   function releaseControls(event) {
     if (!controlsInteracting) return;
-    if (event?.type === "pointerup" && event.target === elements.speedSelect) return;
+    if (!elements.speedMenu.hidden) return;
     controlsInteracting = false;
     showControls();
+  }
+
+  function applyPlaybackSpeed(value, persist = true) {
+    const allowed = ["1", "0.9", "0.8", "0.7", "0.6", "0.5"];
+    const normalized = allowed.includes(String(value)) ? String(value) : "1";
+    playbackSpeed = Number(normalized);
+    elements.video.playbackRate = playbackSpeed;
+    elements.speedButton.textContent = `${playbackSpeed.toFixed(1)}×`;
+    elements.speedMenu.querySelectorAll("[data-speed]").forEach((option) => {
+      option.setAttribute("aria-selected", String(option.dataset.speed === normalized));
+    });
+    if (persist) writeSetting(SPEED_KEY, normalized);
+  }
+
+  function closeSpeedMenu() {
+    elements.speedMenu.hidden = true;
+    elements.speedButton.setAttribute("aria-expanded", "false");
+    controlsInteracting = false;
+    showControls();
+  }
+
+  function rememberRepeatPlayback() {
+    repeatWasPlaying = repeatWasPlaying || playbackIntent || !elements.video.paused;
   }
 
   function syncPlaybackButton(isPlaying) {
@@ -493,7 +519,7 @@
     elements.timeline.max = String(elements.video.duration || record.duration || 0);
     elements.duration.textContent = formatTime(elements.video.duration || record.duration);
     elements.video.currentTime = Math.min(startAt, Math.max(0, elements.video.duration - 0.1));
-    elements.video.playbackRate = Number(elements.speedSelect.value) || 1;
+    elements.video.playbackRate = playbackSpeed;
     setActiveSegment(findActiveIndex(elements.video.currentTime), false);
     history.replaceState(null, "", `./mobile-player.html?series=${encodeURIComponent(seriesKey)}&episode=${encodeURIComponent(projectId)}`);
     elements.playerError.hidden = true;
@@ -520,10 +546,10 @@
   elements.playButton.addEventListener("click", handlePlayClick);
   elements.backButton.addEventListener("click", () => skip(-1));
   elements.forwardButton.addEventListener("click", () => skip(1));
-  elements.repeatButton.addEventListener("pointerdown", () => {
-    repeatWasPlaying = playbackIntent || !elements.video.paused;
-  });
+  elements.repeatButton.addEventListener("pointerdown", rememberRepeatPlayback);
+  elements.repeatButton.addEventListener("touchstart", rememberRepeatPlayback, { passive: true });
   elements.repeatButton.addEventListener("click", () => {
+    const shouldContinuePlaying = repeatWasPlaying || playbackIntent || !elements.video.paused;
     repeatEnabled = !repeatEnabled;
     repeatIndex = repeatEnabled ? nearestSegmentIndex(elements.video.currentTime) : -1;
     if (repeatEnabled && repeatIndex < 0) {
@@ -531,26 +557,40 @@
       showToast("当前位置没有可循环的字幕");
     }
     elements.repeatButton.setAttribute("aria-pressed", String(repeatEnabled));
-    if (repeatWasPlaying && elements.video.paused) setPlayback(true);
+    if (shouldContinuePlaying) setPlayback(true);
     repeatWasPlaying = false;
     showControls();
   });
-  elements.speedSelect.value = readSetting(SPEED_KEY, "1");
-  if (![...elements.speedSelect.options].some((option) => option.value === elements.speedSelect.value)) {
-    elements.speedSelect.value = "1";
-  }
-  elements.speedSelect.addEventListener("pointerdown", () => {
+  applyPlaybackSpeed(readSetting(SPEED_KEY, "1"), false);
+  elements.speedButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const opening = elements.speedMenu.hidden;
+    if (!opening) {
+      closeSpeedMenu();
+      return;
+    }
     speedWasPlaying = playbackIntent || !elements.video.paused;
+    holdControls();
+    elements.speedMenu.hidden = false;
+    elements.speedButton.setAttribute("aria-expanded", "true");
   });
-  elements.speedSelect.addEventListener("change", () => {
-    elements.video.playbackRate = Number(elements.speedSelect.value) || 1;
-    writeSetting(SPEED_KEY, elements.speedSelect.value);
-    if (speedWasPlaying && elements.video.paused) setPlayback(true);
+  elements.speedMenu.addEventListener("click", (event) => {
+    const option = event.target.closest("[data-speed]");
+    if (!option) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const shouldContinuePlaying = speedWasPlaying || playbackIntent || !elements.video.paused;
+    applyPlaybackSpeed(option.dataset.speed);
+    closeSpeedMenu();
+    if (shouldContinuePlaying) setPlayback(true);
     speedWasPlaying = false;
-    releaseControls();
-    showControls();
   });
-  elements.speedSelect.addEventListener("blur", releaseControls);
+  document.addEventListener("click", (event) => {
+    if (elements.speedMenu.hidden || elements.speedControl.contains(event.target)) return;
+    closeSpeedMenu();
+    speedWasPlaying = false;
+  });
   elements.autoNext.checked = readSetting(AUTO_NEXT_KEY, "false") === "true";
   elements.autoNext.addEventListener("change", () => writeSetting(AUTO_NEXT_KEY, elements.autoNext.checked));
   elements.timeline.addEventListener("pointerdown", () => { seeking = true; });
