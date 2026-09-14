@@ -8,7 +8,12 @@
   const VIDEO_DIRECTORY = "videos";
   const AUTO_NEXT_KEY = "tokyo-shadowing:auto-next";
   const SPEED_KEY = "tokyo-shadowing:playback-speed";
+  const CONTROLS_PINNED_KEY = "tokyo-shadowing:controls-pinned";
+  const PANE_WIDTH_KEY = "tokyo-shadowing:landscape-video-width";
   const CONTROLS_HIDE_DELAY = 1100;
+  const DEFAULT_PANE_WIDTH = 44;
+  const MIN_PANE_WIDTH = 30;
+  const MAX_PANE_WIDTH = 70;
   const elements = {
     playerLayout: document.querySelector("#playerLayout"),
     playerShell: document.querySelector("#playerShell"),
@@ -27,6 +32,8 @@
     timeline: document.querySelector("#timeline"),
     currentTime: document.querySelector("#currentTime"),
     duration: document.querySelector("#duration"),
+    controlsPinButton: document.querySelector("#controlsPinButton"),
+    paneResizer: document.querySelector("#paneResizer"),
     overlayJapanese: document.querySelector("#overlayJapanese"),
     overlayChinese: document.querySelector("#overlayChinese"),
     transcriptList: document.querySelector("#transcriptList"),
@@ -47,15 +54,17 @@
   let overlayChineseFromEmbedded = false;
   let videoUrl;
   let controlsTimer;
+  let controlsReleaseTimer;
   let progressSaveTimer;
   let toastTimer;
   let seeking = false;
   let playbackIntent = false;
   let ignorePlayClick = false;
   let controlsInteracting = false;
-  let repeatWasPlaying = false;
-  let speedWasPlaying = false;
+  let controlsPinned = false;
   let playbackSpeed = 1;
+  let paneWidth = DEFAULT_PANE_WIDTH;
+  let resizingPanes = false;
 
   function requestResult(request) {
     return new Promise((resolve, reject) => {
@@ -331,24 +340,27 @@
   function showControls() {
     window.clearTimeout(controlsTimer);
     elements.playerShell.classList.remove("controls-hidden");
-    if (!controlsInteracting && (!elements.video.paused || playbackIntent)) {
+    if (!controlsPinned && !controlsInteracting && elements.speedMenu.hidden && (!elements.video.paused || playbackIntent)) {
       controlsTimer = window.setTimeout(() => {
+        if (controlsPinned || controlsInteracting || !elements.speedMenu.hidden || elements.video.paused) return;
         elements.playerShell.classList.add("controls-hidden");
       }, CONTROLS_HIDE_DELAY);
     }
   }
 
   function holdControls() {
+    window.clearTimeout(controlsReleaseTimer);
     controlsInteracting = true;
     window.clearTimeout(controlsTimer);
     elements.playerShell.classList.remove("controls-hidden");
   }
 
-  function releaseControls(event) {
-    if (!controlsInteracting) return;
-    if (!elements.speedMenu.hidden) return;
-    controlsInteracting = false;
-    showControls();
+  function releaseControls() {
+    window.clearTimeout(controlsReleaseTimer);
+    controlsReleaseTimer = window.setTimeout(() => {
+      controlsInteracting = false;
+      showControls();
+    }, 0);
   }
 
   function applyPlaybackSpeed(value, persist = true) {
@@ -366,12 +378,44 @@
   function closeSpeedMenu() {
     elements.speedMenu.hidden = true;
     elements.speedButton.setAttribute("aria-expanded", "false");
-    controlsInteracting = false;
     showControls();
   }
 
-  function rememberRepeatPlayback() {
-    repeatWasPlaying = repeatWasPlaying || playbackIntent || !elements.video.paused;
+  function setControlsPinned(value, persist = true) {
+    controlsPinned = Boolean(value);
+    elements.controlsPinButton.setAttribute("aria-pressed", String(controlsPinned));
+    elements.playerShell.classList.toggle("controls-pinned", controlsPinned);
+    if (persist) writeSetting(CONTROLS_PINNED_KEY, String(controlsPinned));
+    showControls();
+  }
+
+  function normalizedPaneWidth(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return DEFAULT_PANE_WIDTH;
+    return Math.min(MAX_PANE_WIDTH, Math.max(MIN_PANE_WIDTH, number));
+  }
+
+  function applyPaneWidth(value, persist = true) {
+    paneWidth = normalizedPaneWidth(value);
+    document.body.style.setProperty("--video-pane-width", `${paneWidth}%`);
+    elements.paneResizer.setAttribute("aria-valuenow", String(Math.round(paneWidth)));
+    if (persist) writeSetting(PANE_WIDTH_KEY, paneWidth.toFixed(2));
+  }
+
+  function resizePanesAt(clientX, persist = false) {
+    const bounds = elements.playerLayout.getBoundingClientRect();
+    if (!bounds.width) return;
+    applyPaneWidth(((clientX - bounds.left) / bounds.width) * 100, persist);
+  }
+
+  function stopPaneResize(event) {
+    if (!resizingPanes) return;
+    resizingPanes = false;
+    elements.paneResizer.classList.remove("is-dragging");
+    if (event?.pointerId !== undefined && elements.paneResizer.hasPointerCapture?.(event.pointerId)) {
+      elements.paneResizer.releasePointerCapture(event.pointerId);
+    }
+    applyPaneWidth(paneWidth, true);
   }
 
   function syncPlaybackButton(isPlaying) {
@@ -546,10 +590,7 @@
   elements.playButton.addEventListener("click", handlePlayClick);
   elements.backButton.addEventListener("click", () => skip(-1));
   elements.forwardButton.addEventListener("click", () => skip(1));
-  elements.repeatButton.addEventListener("pointerdown", rememberRepeatPlayback);
-  elements.repeatButton.addEventListener("touchstart", rememberRepeatPlayback, { passive: true });
   elements.repeatButton.addEventListener("click", () => {
-    const shouldContinuePlaying = repeatWasPlaying || playbackIntent || !elements.video.paused;
     repeatEnabled = !repeatEnabled;
     repeatIndex = repeatEnabled ? nearestSegmentIndex(elements.video.currentTime) : -1;
     if (repeatEnabled && repeatIndex < 0) {
@@ -557,8 +598,6 @@
       showToast("当前位置没有可循环的字幕");
     }
     elements.repeatButton.setAttribute("aria-pressed", String(repeatEnabled));
-    if (shouldContinuePlaying) setPlayback(true);
-    repeatWasPlaying = false;
     showControls();
   });
   applyPlaybackSpeed(readSetting(SPEED_KEY, "1"), false);
@@ -570,7 +609,6 @@
       closeSpeedMenu();
       return;
     }
-    speedWasPlaying = playbackIntent || !elements.video.paused;
     holdControls();
     elements.speedMenu.hidden = false;
     elements.speedButton.setAttribute("aria-expanded", "true");
@@ -580,16 +618,39 @@
     if (!option) return;
     event.preventDefault();
     event.stopPropagation();
-    const shouldContinuePlaying = speedWasPlaying || playbackIntent || !elements.video.paused;
     applyPlaybackSpeed(option.dataset.speed);
     closeSpeedMenu();
-    if (shouldContinuePlaying) setPlayback(true);
-    speedWasPlaying = false;
   });
   document.addEventListener("click", (event) => {
     if (elements.speedMenu.hidden || elements.speedControl.contains(event.target)) return;
     closeSpeedMenu();
-    speedWasPlaying = false;
+  });
+  elements.controlsPinButton.addEventListener("click", () => setControlsPinned(!controlsPinned));
+  setControlsPinned(readSetting(CONTROLS_PINNED_KEY, "false") === "true", false);
+  applyPaneWidth(readSetting(PANE_WIDTH_KEY, String(DEFAULT_PANE_WIDTH)), false);
+  elements.paneResizer.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    resizingPanes = true;
+    elements.paneResizer.classList.add("is-dragging");
+    elements.paneResizer.setPointerCapture?.(event.pointerId);
+    resizePanesAt(event.clientX, false);
+  });
+  elements.paneResizer.addEventListener("pointermove", (event) => {
+    if (!resizingPanes) return;
+    event.preventDefault();
+    resizePanesAt(event.clientX, false);
+  });
+  elements.paneResizer.addEventListener("pointerup", stopPaneResize);
+  elements.paneResizer.addEventListener("pointercancel", stopPaneResize);
+  elements.paneResizer.addEventListener("keydown", (event) => {
+    let next = paneWidth;
+    if (event.key === "ArrowLeft") next -= 2;
+    else if (event.key === "ArrowRight") next += 2;
+    else if (event.key === "Home") next = MIN_PANE_WIDTH;
+    else if (event.key === "End") next = MAX_PANE_WIDTH;
+    else return;
+    event.preventDefault();
+    applyPaneWidth(next, true);
   });
   elements.autoNext.checked = readSetting(AUTO_NEXT_KEY, "false") === "true";
   elements.autoNext.addEventListener("change", () => writeSetting(AUTO_NEXT_KEY, elements.autoNext.checked));
@@ -635,7 +696,7 @@
   window.addEventListener("pointercancel", releaseControls);
   elements.playerShell.addEventListener("pointermove", showControls);
   elements.playerShell.addEventListener("pointerleave", () => {
-    if (!elements.video.paused && !controlsInteracting) elements.playerShell.classList.add("controls-hidden");
+    if (!controlsPinned && !controlsInteracting && elements.speedMenu.hidden) showControls();
   });
   elements.playerShell.addEventListener("click", (event) => {
     if (event.target.closest(".player-controls")) return;

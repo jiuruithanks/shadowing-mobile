@@ -1,4 +1,5 @@
 .player-page {
+  --video-pane-width: 44%;
   height: 100dvh;
   overflow: hidden;
   background: #111714;
@@ -153,10 +154,15 @@
   pointer-events: none;
 }
 
+.player-shell.controls-pinned .player-controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .timeline-row {
   height: 24px;
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 38px;
+  grid-template-columns: 38px minmax(0, 1fr) 38px 40px;
   align-items: center;
   gap: 7px;
   font-size: 10px;
@@ -170,6 +176,24 @@
 .timeline-row input {
   width: 100%;
   accent-color: #4bb396;
+}
+
+.pin-button {
+  width: 40px;
+  height: 23px;
+  padding: 0;
+  border: 1px solid #64736b;
+  border-radius: 4px;
+  background: rgb(20 29 25 / 90%);
+  color: #fff;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.pin-button[aria-pressed="true"] {
+  border-color: #65c7aa;
+  background: #186d58;
 }
 
 .control-row {
@@ -292,6 +316,10 @@
   color: var(--ink);
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+}
+
+.pane-resizer {
+  display: none;
 }
 
 .player-auto-next {
@@ -448,8 +476,9 @@
     position: absolute;
     z-index: 8;
     top: 0;
-    right: 55.5556%;
+    right: auto;
     left: 0;
+    width: var(--video-pane-width);
     height: calc(48px + env(safe-area-inset-top));
     border: 0;
     background: linear-gradient(to bottom, rgb(4 7 5 / 76%), transparent);
@@ -457,7 +486,7 @@
 
   .player-layout {
     height: 100dvh;
-    grid-template-columns: minmax(0, 4fr) minmax(400px, 5fr);
+    grid-template-columns: var(--video-pane-width) 10px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
   }
 
@@ -482,6 +511,40 @@
 
   .transcript-panel {
     padding: max(4px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) env(safe-area-inset-bottom) 6px;
+  }
+
+  .pane-resizer {
+    position: relative;
+    z-index: 10;
+    width: 10px;
+    height: 100%;
+    border: 0;
+    background: #d5dcd8;
+    cursor: col-resize;
+    touch-action: none;
+    display: grid;
+    place-items: center;
+  }
+
+  .pane-resizer::before {
+    position: absolute;
+    width: 1px;
+    height: 100%;
+    background: #aeb8b2;
+    content: "";
+  }
+
+  .pane-resizer span {
+    position: relative;
+    width: 4px;
+    height: 42px;
+    border-radius: 2px;
+    background: #5c6d64;
+  }
+
+  .pane-resizer:focus-visible span,
+  .pane-resizer.is-dragging span {
+    background: #14745c;
   }
 
   .transcript-row {
