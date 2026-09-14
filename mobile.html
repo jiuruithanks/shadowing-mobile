@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4f5f2" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="跟读" />
+    <title>手机跟读 · 東京シャドーイング</title>
+    <link rel="icon" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./mobile.css?v=20260914-02" />
+  </head>
+  <body>
+    <header class="mobile-header">
+      <a class="mobile-brand" href="./mobile.html" aria-label="手机跟读项目">
+        <span class="mobile-brand-mark" aria-hidden="true">声</span>
+        <span>
+          <strong>手机跟读</strong>
+          <small>LOCAL SHADOWING</small>
+        </span>
+      </a>
+      <button id="installButton" class="icon-button" type="button" hidden aria-label="安装到主屏幕" title="安装到主屏幕">↓</button>
+    </header>
+
+    <main class="mobile-main">
+      <section class="library-heading" aria-labelledby="libraryTitle">
+        <div>
+          <span class="eyebrow">OFFLINE LIBRARY</span>
+          <h1 id="libraryTitle">跟读项目</h1>
+        </div>
+        <label class="import-button" for="packageInput">
+          <input id="packageInput" type="file" accept=".shadowing,application/zip" />
+          <span aria-hidden="true">＋</span>
+          导入
+        </label>
+      </section>
+
+      <section id="storageSummary" class="storage-summary" aria-label="本地存储用量">
+        <div>
+          <span>本地项目</span>
+          <strong id="projectSummary">0 部 · 0 集</strong>
+        </div>
+        <div>
+          <span>占用空间</span>
+          <strong id="storageUsage">0 B</strong>
+        </div>
+      </section>
+
+      <section id="importStatus" class="import-status" aria-live="polite" hidden>
+        <div class="import-status-heading">
+          <strong id="importStatusTitle">正在检查项目包</strong>
+          <span id="importProgressText">0%</span>
+        </div>
+        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="importProgressBar"></span>
+        </div>
+        <p id="importStatusMessage">读取项目清单</p>
+      </section>
+
+      <section id="library" class="mobile-library" aria-live="polite"></section>
+
+      <section id="emptyState" class="empty-state">
+        <div class="empty-state-mark" aria-hidden="true">声</div>
+        <strong>尚无跟读项目</strong>
+        <span>从“文件”导入电脑端生成的 .shadowing 项目包</span>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <dialog id="confirmDialog" class="confirm-dialog">
+      <form method="dialog">
+        <h2 id="confirmTitle">删除项目</h2>
+        <p id="confirmMessage"></p>
+        <div class="dialog-actions">
+          <button value="cancel" class="button-secondary">取消</button>
+          <button value="confirm" class="button-danger">删除</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./mobile-package.js?v=20260914-01"></script>
+    <script src="./mobile.js?v=20260914-01" defer></script>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "東京シャドーイング · 手机跟读",
+  "short_name": "手机跟读",
+  "description": "离线日语影子跟读播放器",
+  "lang": "zh-CN",
+  "start_url": "./mobile.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f5f2",
+  "theme_color": "#f4f5f2",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

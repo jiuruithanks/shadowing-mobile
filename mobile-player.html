@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#111714" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>跟读播放 · 東京シャドーイング</title>
+    <link rel="icon" href="./favicon.svg" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="stylesheet" href="./mobile.css?v=20260914-02" />
+    <link rel="stylesheet" href="./mobile-player.css?v=20260914-02" />
+  </head>
+  <body class="player-page">
+    <header class="player-header">
+      <a class="player-back" href="./mobile.html" aria-label="返回项目列表" title="返回项目列表">‹</a>
+      <div class="player-heading">
+        <strong id="seriesTitle">手机跟读</strong>
+        <span id="episodeTitle">正在载入</span>
+      </div>
+      <button id="fullscreenButton" class="player-header-button" type="button" aria-label="全屏" title="全屏">⛶</button>
+    </header>
+
+    <main id="playerLayout" class="player-layout">
+      <section id="playerShell" class="player-shell" aria-label="视频播放器">
+        <video id="video" playsinline preload="metadata"></video>
+        <div id="subtitleOverlay" class="subtitle-overlay" aria-live="off">
+          <div id="overlayJapanese" class="overlay-japanese"></div>
+          <div id="overlayChinese" class="overlay-chinese"></div>
+        </div>
+        <div id="playerControls" class="player-controls">
+          <div class="timeline-row">
+            <span id="currentTime">0:00</span>
+            <input id="timeline" type="range" min="0" max="100" value="0" step="0.01" aria-label="播放进度" />
+            <span id="duration">0:00</span>
+          </div>
+          <div class="control-row">
+            <button id="backButton" class="control-button" type="button" aria-label="后退 1 秒" title="后退 1 秒">↶<small>1</small></button>
+            <button id="playButton" class="play-button" type="button" aria-label="播放" title="播放">▶</button>
+            <button id="forwardButton" class="control-button" type="button" aria-label="前进 1 秒" title="前进 1 秒">↷<small>1</small></button>
+            <button id="repeatButton" class="mode-button" type="button" aria-pressed="false">单句循环</button>
+            <label class="speed-control">
+              <span class="visually-hidden">播放速度</span>
+              <select id="speedSelect" aria-label="播放速度">
+                <option value="1">1.0×</option>
+                <option value="0.9">0.9×</option>
+                <option value="0.8">0.8×</option>
+                <option value="0.7">0.7×</option>
+                <option value="0.6">0.6×</option>
+                <option value="0.5">0.5×</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="transcript-panel" aria-labelledby="transcriptTitle">
+        <div class="transcript-heading">
+          <div>
+            <span class="eyebrow">TIMED TRANSCRIPT</span>
+            <h1 id="transcriptTitle">字幕</h1>
+          </div>
+          <label class="auto-next-control">
+            <input id="autoNext" type="checkbox" />
+            <span>自动下一集</span>
+          </label>
+        </div>
+        <article id="currentSubtitle" class="current-subtitle">
+          <time id="currentSubtitleTime">00:00</time>
+          <div id="currentJapanese" class="current-japanese"></div>
+          <p id="currentChinese" class="current-chinese"></p>
+        </article>
+        <div id="transcriptList" class="transcript-list"></div>
+      </section>
+    </main>
+
+    <section id="playerError" class="player-error" hidden role="alert">
+      <strong>无法打开这一集</strong>
+      <p id="playerErrorMessage"></p>
+      <a class="button-primary" href="./mobile.html">返回项目列表</a>
+    </section>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="./mobile-player.js?v=20260914-02" defer></script>
+  </body>
+</html>
