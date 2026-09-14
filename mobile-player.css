@@ -284,45 +284,6 @@
   accent-color: var(--green);
 }
 
-.current-subtitle {
-  min-height: 118px;
-  margin: 13px 0 12px;
-  padding: 12px 13px;
-  border-left: 4px solid var(--green);
-  background: var(--green-soft);
-  display: grid;
-  align-content: center;
-  gap: 7px;
-}
-
-.current-subtitle time {
-  color: var(--green-dark);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 800;
-}
-
-.current-japanese {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: clamp(20px, 6vw, 28px);
-  font-weight: 700;
-  line-height: 1.6;
-}
-
-rt {
-  color: var(--muted);
-  font-size: 0.48em;
-  font-weight: 600;
-}
-
-.current-chinese {
-  margin: 0;
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 1.45;
-}
-
 .transcript-list {
   min-height: 0;
   overflow-y: auto;
@@ -445,14 +406,6 @@ rt {
     padding-top: calc(12px + env(safe-area-inset-top));
   }
 
-  .current-subtitle {
-    min-height: 94px;
-    margin-top: 8px;
-  }
-
-  .current-japanese {
-    font-size: clamp(17px, 2.4vw, 23px);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -5,6 +5,7 @@
   const DB_VERSION = 1;
   const SERIES_STORE = "series";
   const EPISODE_STORE = "episodes";
+  const VIDEO_DIRECTORY = "videos";
   const elements = {
     packageInput: document.querySelector("#packageInput"),
     installButton: document.querySelector("#installButton"),
@@ -77,6 +78,64 @@
 
   function episodeStorageKey(seriesKey, projectId) {
     return `${seriesKey}\u001f${projectId}`;
+  }
+
+  function supportsPersistentFiles() {
+    return typeof navigator.storage?.getDirectory === "function";
+  }
+
+  function videoFileName(manifest) {
+    const projectId = String(manifest.project_id || "episode")
+      .replace(/[^a-zA-Z0-9._-]+/g, "_")
+      .slice(0, 80);
+    return `${String(manifest.video.sha256).toLowerCase()}-${projectId}.mp4`;
+  }
+
+  async function videoDirectory(create = false) {
+    const root = await navigator.storage.getDirectory();
+    return root.getDirectoryHandle(VIDEO_DIRECTORY, { create });
+  }
+
+  async function storeVideoFile(blob, fileName, onProgress = () => {}) {
+    const directory = await videoDirectory(true);
+    const handle = await directory.getFileHandle(fileName, { create: true });
+    const writable = await handle.createWritable();
+    const chunkSize = 4 * 1024 * 1024;
+    try {
+      for (let offset = 0; offset < blob.size; offset += chunkSize) {
+        const end = Math.min(blob.size, offset + chunkSize);
+        await writable.write(blob.slice(offset, end));
+        onProgress(end, blob.size);
+      }
+      await writable.close();
+    } catch (error) {
+      await writable.abort().catch(() => {});
+      await directory.removeEntry(fileName).catch(() => {});
+      throw error;
+    }
+  }
+
+  async function removeVideoFile(fileName) {
+    if (!fileName || !supportsPersistentFiles()) return;
+    try {
+      const directory = await videoDirectory(false);
+      await directory.removeEntry(fileName);
+    } catch (error) {
+      if (error?.name !== "NotFoundError") throw error;
+    }
+  }
+
+  async function hasVideoFile(fileName, expectedSize) {
+    if (!fileName || !supportsPersistentFiles()) return false;
+    try {
+      const directory = await videoDirectory(false);
+      const handle = await directory.getFileHandle(fileName);
+      const file = await handle.getFile();
+      return file.size > 0 && (!expectedSize || file.size === Number(expectedSize));
+    } catch (error) {
+      if (error?.name === "NotFoundError") return false;
+      throw error;
+    }
   }
 
   function formatBytes(value) {
@@ -155,18 +214,30 @@
     const seriesKey = String(result.manifest.series.key);
     const existingEpisodes = await episodesForSeries(seriesKey);
     const existingByProject = new Map(existingEpisodes.map((episode) => [episode.projectId, episode]));
+    const persistentFileStatus = new Map();
+    if (supportsPersistentFiles()) {
+      await Promise.all(existingEpisodes.map(async (episode) => {
+        persistentFileStatus.set(
+          episode.projectId,
+          await hasVideoFile(episode.videoFileName, episode.videoSize),
+        );
+      }));
+    }
     let skipped = 0;
     let replaced = 0;
     const imports = [];
     result.episodes.forEach(({ manifest, transcript, videoBlob }) => {
       const previous = existingByProject.get(manifest.project_id);
+      const previousVideoReady = previous && persistentFileStatus.get(previous.projectId) === true;
+      const needsStorageMigration = previous && supportsPersistentFiles() && !previousVideoReady;
       if (previous?.videoSha256 === manifest.video.sha256
-        && previous?.transcriptSha256 === manifest.transcript.sha256) {
+        && previous?.transcriptSha256 === manifest.transcript.sha256
+        && !needsStorageMigration) {
         skipped += 1;
         return;
       }
       if (previous) replaced += 1;
-      imports.push({ manifest, transcript, videoBlob });
+      imports.push({ manifest, transcript, videoBlob, previous, previousVideoReady });
     });
     if (!imports.length) {
       throw new ShadowingPackage.PackageError("这个项目包的全部剧集已经导入", "duplicate_package");
@@ -175,7 +246,38 @@
     const bytesToWrite = imports.reduce((sum, episode) => sum + episode.videoBlob.size
       + Number(episode.manifest.transcript.size || 0), 0);
     await checkAvailableStorage(bytesToWrite);
-    updateImportProgress(95, "正在保存到手机", "正在导入项目");
+    if (navigator.storage?.persist) await navigator.storage.persist().catch(() => false);
+    const storedEpisodes = [];
+    const newlyWrittenFiles = [];
+    let writtenBytes = 0;
+    const totalVideoBytes = imports.reduce((sum, episode) => sum + episode.videoBlob.size, 0);
+    try {
+      for (const episode of imports) {
+        const {
+          manifest, videoBlob, previous, previousVideoReady,
+        } = episode;
+        let storedVideoFileName = "";
+        if (supportsPersistentFiles()) {
+          if (previousVideoReady && previous.videoSha256 === manifest.video.sha256) {
+            storedVideoFileName = previous.videoFileName;
+            writtenBytes += videoBlob.size;
+          } else {
+            storedVideoFileName = videoFileName(manifest);
+            await storeVideoFile(videoBlob, storedVideoFileName, (current) => {
+              const progress = 95 + ((writtenBytes + current) / Math.max(1, totalVideoBytes)) * 4;
+              updateImportProgress(progress, "正在保存视频到手机", "正在导入项目");
+            });
+            newlyWrittenFiles.push(storedVideoFileName);
+            writtenBytes += videoBlob.size;
+          }
+        }
+        storedEpisodes.push({ ...episode, storedVideoFileName });
+      }
+    } catch (error) {
+      await Promise.all(newlyWrittenFiles.map((fileName) => removeVideoFile(fileName).catch(() => {})));
+      throw error;
+    }
+    updateImportProgress(99, "正在保存字幕和项目索引", "正在导入项目");
     const database = await openDatabase();
     const transaction = database.transaction([SERIES_STORE, EPISODE_STORE], "readwrite");
     const seriesStore = transaction.objectStore(SERIES_STORE);
@@ -188,8 +290,8 @@
       importedAt: now,
       formatVersion: result.manifest.version,
     });
-    imports.forEach(({ manifest, transcript, videoBlob }) => {
-      episodeStore.put({
+    storedEpisodes.forEach(({ manifest, transcript, videoBlob, storedVideoFileName }) => {
+      const episodeRecord = {
         storageKey: episodeStorageKey(seriesKey, manifest.project_id),
         seriesKey,
         projectId: String(manifest.project_id),
@@ -201,13 +303,25 @@
         videoSha256: String(manifest.video.sha256),
         transcriptSha256: String(manifest.transcript.sha256),
         transcript,
-        videoBlob,
+        videoStorage: storedVideoFileName ? "opfs" : "indexeddb",
+        videoFileName: storedVideoFileName,
         importedAt: now,
         sourceFile: file.name,
-      });
+      };
+      if (!storedVideoFileName) episodeRecord.videoBlob = videoBlob;
+      episodeStore.put(episodeRecord);
     });
-    await transactionDone(transaction);
-    if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+    try {
+      await transactionDone(transaction);
+    } catch (error) {
+      await Promise.all(newlyWrittenFiles.map((fileName) => removeVideoFile(fileName).catch(() => {})));
+      throw error;
+    }
+    const obsoleteFiles = storedEpisodes
+      .filter(({ previous, storedVideoFileName }) => previous?.videoFileName
+        && previous.videoFileName !== storedVideoFileName)
+      .map(({ previous }) => previous.videoFileName);
+    await Promise.all(obsoleteFiles.map((fileName) => removeVideoFile(fileName).catch(() => {})));
     return { imported: imports.length, skipped, replaced };
   }
 
@@ -249,6 +363,7 @@
       if (remainingRequest.result === 0) transaction.objectStore(SERIES_STORE).delete(series.key);
     };
     await transactionDone(transaction);
+    await removeVideoFile(episode.videoFileName).catch(() => {});
     await renderLibrary();
     showToast("这一集已删除");
   }
@@ -263,6 +378,7 @@
     episodes.forEach((episode) => episodeStore.delete(episode.storageKey));
     transaction.objectStore(SERIES_STORE).delete(series.key);
     await transactionDone(transaction);
+    await Promise.all(episodes.map((episode) => removeVideoFile(episode.videoFileName).catch(() => {})));
     await renderLibrary();
     showToast("番剧项目已删除");
   }

@@ -5,6 +5,7 @@
   const DB_VERSION = 1;
   const SERIES_STORE = "series";
   const EPISODE_STORE = "episodes";
+  const VIDEO_DIRECTORY = "videos";
   const AUTO_NEXT_KEY = "tokyo-shadowing:auto-next";
   const SPEED_KEY = "tokyo-shadowing:playback-speed";
   const CONTROLS_HIDE_DELAY = 1100;
@@ -25,9 +26,6 @@
     duration: document.querySelector("#duration"),
     overlayJapanese: document.querySelector("#overlayJapanese"),
     overlayChinese: document.querySelector("#overlayChinese"),
-    currentSubtitleTime: document.querySelector("#currentSubtitleTime"),
-    currentJapanese: document.querySelector("#currentJapanese"),
-    currentChinese: document.querySelector("#currentChinese"),
     transcriptList: document.querySelector("#transcriptList"),
     autoNext: document.querySelector("#autoNext"),
     playerError: document.querySelector("#playerError"),
@@ -163,6 +161,29 @@
     return "当前浏览器中没有这一集，请返回项目列表重新打开或导入 .shadowing 项目包。";
   }
 
+  async function storedVideoBlob(record) {
+    if (record.videoFileName) {
+      if (typeof navigator.storage?.getDirectory !== "function") {
+        throw new Error("当前浏览器无法读取手机本地视频文件");
+      }
+      try {
+        const root = await navigator.storage.getDirectory();
+        const directory = await root.getDirectoryHandle(VIDEO_DIRECTORY);
+        const handle = await directory.getFileHandle(record.videoFileName);
+        const file = await handle.getFile();
+        if (!file.size) throw new Error("本地视频文件为空，请重新导入 .shadowing 项目包");
+        return file;
+      } catch (error) {
+        if (error?.name === "NotFoundError") {
+          throw new Error("本地视频文件不存在，请重新导入 .shadowing 项目包");
+        }
+        throw error;
+      }
+    }
+    if (record.videoBlob instanceof Blob && record.videoBlob.size) return record.videoBlob;
+    throw new Error(missingEpisodeMessage());
+  }
+
   function configureSubtitleOverlay(transcript) {
     const processing = transcript?.subtitle_processing || {};
     const japaneseSources = Object.keys(processing.japanese_sources || {});
@@ -188,35 +209,6 @@
 
   function chineseText(segment) {
     return String(segment?.chinese_text || segment?.chinese || segment?.translation || "").trim();
-  }
-
-  function isOnlyKana(value) {
-    return /^[\u3040-\u30ffー・、。！？!?\s]+$/.test(value);
-  }
-
-  function renderJapanese(container, segment, withRuby = true) {
-    container.replaceChildren();
-    const tokens = Array.isArray(segment?.tokens) ? segment.tokens : [];
-    if (!withRuby || !tokens.length) {
-      container.textContent = japaneseText(segment);
-      return;
-    }
-    tokens.forEach((token) => {
-      const surface = String(token?.surface || "");
-      const reading = String(token?.reading || "");
-      if (!surface) return;
-      if (!reading || reading === surface || token?.is_punctuation || isOnlyKana(surface)) {
-        container.append(document.createTextNode(surface));
-        return;
-      }
-      const ruby = document.createElement("ruby");
-      ruby.append(document.createTextNode(surface));
-      const rt = document.createElement("rt");
-      rt.textContent = reading;
-      ruby.append(rt);
-      container.append(ruby);
-    });
-    if (!container.textContent.trim()) container.textContent = japaneseText(segment);
   }
 
   function normalizedSegments(transcript) {
@@ -257,17 +249,11 @@
     if (index < 0 || !segments[index]) {
       elements.overlayJapanese.textContent = "";
       elements.overlayChinese.textContent = "";
-      elements.currentJapanese.textContent = "";
-      elements.currentChinese.textContent = "";
-      elements.currentSubtitleTime.textContent = "--:--";
       return;
     }
     const segment = segments[index];
     elements.overlayJapanese.textContent = overlayJapaneseFromEmbedded ? japaneseText(segment) : "";
     elements.overlayChinese.textContent = overlayChineseFromEmbedded ? chineseText(segment) : "";
-    renderJapanese(elements.currentJapanese, segment, true);
-    elements.currentChinese.textContent = chineseText(segment);
-    elements.currentSubtitleTime.textContent = formatTime(segment.start, true);
     const row = elements.transcriptList.querySelector(`[data-index="${index}"]`);
     row?.classList.add("is-active");
     if (scroll && row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -411,7 +397,9 @@
       const allEpisodes = await getAllEpisodes();
       record = allEpisodes.find((candidate) => String(candidate.projectId) === String(projectId));
     }
-    if (!record?.videoBlob || !record?.transcript) throw new Error(missingEpisodeMessage());
+    if (!record?.transcript || (!record.videoFileName && !record.videoBlob)) {
+      throw new Error(missingEpisodeMessage());
+    }
     seriesKey = record.seriesKey;
     projectId = record.projectId;
     const series = await getRecord(SERIES_STORE, seriesKey);
@@ -422,6 +410,7 @@
       if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
       return String(left.episodeLabel).localeCompare(String(right.episodeLabel), "zh-CN");
     });
+    const storedVideo = await storedVideoBlob(record);
     if (videoUrl) URL.revokeObjectURL(videoUrl);
     episodeRecord = record;
     seriesRecord = series;
@@ -439,13 +428,19 @@
     document.title = `${record.episodeLabel} · ${series.title}`;
     renderTranscript();
     setActiveSegment(-1, false);
-    videoUrl = URL.createObjectURL(record.videoBlob);
+    videoUrl = URL.createObjectURL(storedVideo);
     elements.video.src = videoUrl;
     const playback = readPlayback(record);
     const startAt = playback.completed ? 0 : Math.max(0, Number(playback.position) || 0);
     await new Promise((resolve, reject) => {
       const loaded = () => { cleanup(); resolve(); };
-      const failed = () => { cleanup(); reject(new Error("本地视频无法读取")); };
+      const failed = () => {
+        cleanup();
+        const message = record.videoFileName
+          ? "本地视频文件无法读取，请重新导入 .shadowing 项目包"
+          : "旧版存储的视频无法读取，请返回项目列表重新导入同一个 .shadowing 项目包完成迁移";
+        reject(new Error(message));
+      };
       const cleanup = () => {
         elements.video.removeEventListener("loadedmetadata", loaded);
         elements.video.removeEventListener("error", failed);
