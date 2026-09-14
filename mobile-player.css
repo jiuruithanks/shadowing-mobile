@@ -141,7 +141,7 @@
   right: 0;
   bottom: 0;
   left: 0;
-  min-height: 76px;
+  min-height: 82px;
   padding: 8px max(12px, env(safe-area-inset-right)) 9px max(12px, env(safe-area-inset-left));
   background: linear-gradient(to bottom, transparent, rgb(5 8 7 / 90%) 34%);
   color: #fff;
@@ -174,7 +174,7 @@
 }
 
 .control-row {
-  height: 40px;
+  height: 46px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -185,7 +185,7 @@
 .play-button,
 .mode-button,
 .speed-control select {
-  height: 38px;
+  height: 42px;
   border: 1px solid #64736b;
   border-radius: 6px;
   background: rgb(20 29 25 / 90%);
@@ -209,7 +209,8 @@
 }
 
 .play-button {
-  width: 46px;
+  width: 54px;
+  height: 46px;
   padding: 0;
   border-color: #8a9991;
   font-size: 16px;
@@ -429,7 +430,7 @@ rt {
   }
 
   .subtitle-overlay {
-    bottom: calc(78px + env(safe-area-inset-bottom));
+    bottom: calc(86px + env(safe-area-inset-bottom));
   }
 
   .overlay-japanese {

@@ -7,6 +7,7 @@
   const EPISODE_STORE = "episodes";
   const AUTO_NEXT_KEY = "tokyo-shadowing:auto-next";
   const SPEED_KEY = "tokyo-shadowing:playback-speed";
+  const CONTROLS_HIDE_DELAY = 1100;
   const elements = {
     playerLayout: document.querySelector("#playerLayout"),
     playerShell: document.querySelector("#playerShell"),
@@ -48,6 +49,8 @@
   let progressSaveTimer;
   let toastTimer;
   let seeking = false;
+  let playbackIntent = false;
+  let ignorePlayClick = false;
 
   function requestResult(request) {
     return new Promise((resolve, reject) => {
@@ -147,6 +150,17 @@
     elements.playerLayout.hidden = true;
     elements.playerErrorMessage.textContent = message;
     elements.playerError.hidden = false;
+  }
+
+  function isStandaloneApp() {
+    return window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  }
+
+  function missingEpisodeMessage() {
+    if (isStandaloneApp()) {
+      return "这个主屏幕 App 中没有这一集。iPhone 不会把 Safari 已导入的本地项目复制到主屏幕 App，请在这里重新导入 .shadowing 项目包。";
+    }
+    return "当前浏览器中没有这一集，请返回项目列表重新打开或导入 .shadowing 项目包。";
   }
 
   function configureSubtitleOverlay(transcript) {
@@ -266,7 +280,7 @@
     setActiveSegment(index, true);
     if (repeatEnabled) repeatIndex = index;
     showControls();
-    if (autoplay) elements.video.play().catch(() => showToast("请点击播放"));
+    if (autoplay) setPlayback(true);
   }
 
   function renderTranscript() {
@@ -300,16 +314,58 @@
   function showControls() {
     window.clearTimeout(controlsTimer);
     elements.playerShell.classList.remove("controls-hidden");
-    if (!elements.video.paused) {
+    if (!elements.video.paused || playbackIntent) {
       controlsTimer = window.setTimeout(() => {
         elements.playerShell.classList.add("controls-hidden");
-      }, 2600);
+      }, CONTROLS_HIDE_DELAY);
     }
   }
 
-  function togglePlayback() {
-    if (elements.video.paused) elements.video.play().catch(() => showToast("无法开始播放"));
-    else elements.video.pause();
+  function syncPlaybackButton(isPlaying) {
+    elements.playButton.textContent = isPlaying ? "❚❚" : "▶";
+    elements.playButton.setAttribute("aria-label", isPlaying ? "暂停" : "播放");
+    elements.playButton.title = isPlaying ? "暂停" : "播放";
+  }
+
+  function setPlayback(shouldPlay) {
+    playbackIntent = shouldPlay;
+    syncPlaybackButton(shouldPlay);
+    if (!shouldPlay) {
+      elements.video.pause();
+      showControls();
+      return;
+    }
+    elements.video.play().then(() => {
+      if (!playbackIntent) elements.video.pause();
+    }).catch(() => {
+      playbackIntent = false;
+      syncPlaybackButton(false);
+      showControls();
+      showToast("无法开始播放");
+    });
+  }
+
+  function togglePlayback(event) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    setPlayback(!playbackIntent);
+  }
+
+  function handlePlayPointerDown(event) {
+    if (event.pointerType === "mouse") return;
+    ignorePlayClick = true;
+    window.setTimeout(() => { ignorePlayClick = false; }, 450);
+    togglePlayback(event);
+  }
+
+  function handlePlayClick(event) {
+    if (ignorePlayClick) {
+      ignorePlayClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    togglePlayback(event);
   }
 
   function skip(seconds) {
@@ -350,8 +406,14 @@
   }
 
   async function loadEpisode(seriesKey, projectId, autoplay = false) {
-    const record = await getRecord(EPISODE_STORE, storageKey(seriesKey, projectId));
-    if (!record?.videoBlob || !record?.transcript) throw new Error("这一集未保存在手机本地");
+    let record = await getRecord(EPISODE_STORE, storageKey(seriesKey, projectId));
+    if (!record) {
+      const allEpisodes = await getAllEpisodes();
+      record = allEpisodes.find((candidate) => String(candidate.projectId) === String(projectId));
+    }
+    if (!record?.videoBlob || !record?.transcript) throw new Error(missingEpisodeMessage());
+    seriesKey = record.seriesKey;
+    projectId = record.projectId;
     const series = await getRecord(SERIES_STORE, seriesKey);
     if (!series) throw new Error("番剧项目信息不存在");
     const availableEpisodes = (await getAllEpisodes(seriesKey)).sort((left, right) => {
@@ -368,6 +430,8 @@
     activeIndex = -2;
     repeatIndex = -1;
     repeatEnabled = false;
+    playbackIntent = false;
+    syncPlaybackButton(false);
     configureSubtitleOverlay(record.transcript);
     elements.repeatButton.setAttribute("aria-pressed", "false");
     elements.seriesTitle.textContent = series.title;
@@ -399,7 +463,7 @@
     elements.playerError.hidden = true;
     elements.playerLayout.hidden = false;
     showControls();
-    if (autoplay) await elements.video.play().catch(() => showToast("下一集已打开，请点击播放"));
+    if (autoplay) setPlayback(true);
   }
 
   async function loadInitialEpisode() {
@@ -416,7 +480,8 @@
     await loadEpisode(seriesKey, projectId, false);
   }
 
-  elements.playButton.addEventListener("click", togglePlayback);
+  elements.playButton.addEventListener("pointerdown", handlePlayPointerDown);
+  elements.playButton.addEventListener("click", handlePlayClick);
   elements.backButton.addEventListener("click", () => skip(-1));
   elements.forwardButton.addEventListener("click", () => skip(1));
   elements.repeatButton.addEventListener("click", () => {
@@ -466,15 +531,13 @@
     schedulePlaybackSave();
   });
   elements.video.addEventListener("play", () => {
-    elements.playButton.textContent = "❚❚";
-    elements.playButton.setAttribute("aria-label", "暂停");
-    elements.playButton.title = "暂停";
+    playbackIntent = true;
+    syncPlaybackButton(true);
     showControls();
   });
   elements.video.addEventListener("pause", () => {
-    elements.playButton.textContent = "▶";
-    elements.playButton.setAttribute("aria-label", "播放");
-    elements.playButton.title = "播放";
+    playbackIntent = false;
+    syncPlaybackButton(false);
     showControls();
     savePlayback(false);
   });
@@ -486,7 +549,7 @@
   elements.playerShell.addEventListener("click", (event) => {
     if (event.target.closest(".player-controls")) return;
     if (elements.playerShell.classList.contains("controls-hidden")) showControls();
-    else togglePlayback();
+    else togglePlayback(event);
   });
   elements.fullscreenButton.addEventListener("click", async () => {
     try {
@@ -500,7 +563,17 @@
   document.addEventListener("fullscreenchange", showControls);
   window.addEventListener("pagehide", () => {
     savePlayback(false);
-    if (videoUrl) URL.revokeObjectURL(videoUrl);
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted || !episodeRecord) return;
+    if (elements.video.error || !elements.video.src) {
+      loadEpisode(episodeRecord.seriesKey, episodeRecord.projectId, false)
+        .catch((error) => showError(error.message || "无法恢复本地视频"));
+      return;
+    }
+    elements.playerError.hidden = true;
+    elements.playerLayout.hidden = false;
+    showControls();
   });
 
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("./mobile-sw.js").catch(() => {});
