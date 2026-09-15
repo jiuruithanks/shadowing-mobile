@@ -70,6 +70,7 @@
   let toastTimer;
   let seeking = false;
   let playbackIntent = false;
+  let suppressNextPlayControls = false;
   let ignorePlayClick = false;
   let controlsInteracting = false;
   let controlsPinned = false;
@@ -425,8 +426,10 @@
     elements.video.currentTime = segment.start;
     setActiveSegment(index, true);
     if (repeatEnabled) repeatIndex = index;
-    showControls();
-    if (autoplay) setPlayback(true);
+    if (autoplay) {
+      hideControls();
+      setPlayback(true, false);
+    }
   }
 
   function renderTranscript() {
@@ -450,7 +453,7 @@
       recordingMark.textContent = "●";
       recordingMark.setAttribute("aria-label", "已有录音");
       row.append(time, copy, recordingMark);
-      row.addEventListener("click", () => seekToSegment(index, false));
+      row.addEventListener("click", () => seekToSegment(index, true));
       fragment.append(row);
     });
     elements.transcriptList.replaceChildren(fragment);
@@ -731,12 +734,18 @@
   function showControls() {
     window.clearTimeout(controlsTimer);
     elements.playerShell.classList.remove("controls-hidden");
-    if (!controlsPinned && !controlsInteracting && !activeRecording && elements.speedMenu.hidden && (!elements.video.paused || playbackIntent)) {
+    if (!controlsPinned && !controlsInteracting && !activeRecording && elements.speedMenu.hidden) {
       controlsTimer = window.setTimeout(() => {
-        if (controlsPinned || controlsInteracting || activeRecording || !elements.speedMenu.hidden || elements.video.paused) return;
+        if (controlsPinned || controlsInteracting || activeRecording || !elements.speedMenu.hidden) return;
         elements.playerShell.classList.add("controls-hidden");
       }, CONTROLS_HIDE_DELAY);
     }
+  }
+
+  function hideControls() {
+    window.clearTimeout(controlsTimer);
+    if (controlsPinned || controlsInteracting || activeRecording || !elements.speedMenu.hidden) return;
+    elements.playerShell.classList.add("controls-hidden");
   }
 
   function holdControls() {
@@ -747,6 +756,7 @@
   }
 
   function releaseControls() {
+    if (!controlsInteracting) return;
     window.clearTimeout(controlsReleaseTimer);
     controlsReleaseTimer = window.setTimeout(() => {
       controlsInteracting = false;
@@ -766,10 +776,10 @@
     if (persist) writeSetting(SPEED_KEY, normalized);
   }
 
-  function closeSpeedMenu() {
+  function closeSpeedMenu(revealControls = true) {
     elements.speedMenu.hidden = true;
     elements.speedButton.setAttribute("aria-expanded", "false");
-    showControls();
+    if (revealControls) showControls();
   }
 
   function setControlsPinned(value, persist = true) {
@@ -815,18 +825,25 @@
     elements.playButton.title = isPlaying ? "暂停" : "播放";
   }
 
-  function setPlayback(shouldPlay) {
+  function setPlayback(shouldPlay, revealControls = true) {
     playbackIntent = shouldPlay;
     syncPlaybackButton(shouldPlay);
     if (!shouldPlay) {
+      suppressNextPlayControls = false;
       elements.video.pause();
-      showControls();
+      if (revealControls) showControls();
       return;
     }
+    suppressNextPlayControls = !revealControls;
     elements.video.play().then(() => {
       if (!playbackIntent) elements.video.pause();
+      if (!revealControls && suppressNextPlayControls) {
+        suppressNextPlayControls = false;
+        hideControls();
+      }
     }).catch(() => {
       playbackIntent = false;
+      suppressNextPlayControls = false;
       syncPlaybackButton(false);
       showControls();
       showToast("无法开始播放");
@@ -1031,7 +1048,7 @@
   });
   document.addEventListener("click", (event) => {
     if (elements.speedMenu.hidden || elements.speedControl.contains(event.target)) return;
-    closeSpeedMenu();
+    closeSpeedMenu(false);
   });
   elements.controlsPinButton.addEventListener("click", () => setControlsPinned(!controlsPinned));
   setControlsPinned(readSetting(CONTROLS_PINNED_KEY, "false") === "true", false);
@@ -1090,6 +1107,11 @@
   elements.video.addEventListener("play", () => {
     playbackIntent = true;
     syncPlaybackButton(true);
+    if (suppressNextPlayControls) {
+      suppressNextPlayControls = false;
+      hideControls();
+      return;
+    }
     showControls();
   });
   elements.video.addEventListener("pause", () => {
