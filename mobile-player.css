@@ -245,6 +245,24 @@
   font-size: 11px;
 }
 
+.repeat-button {
+  width: 46px;
+  min-width: 46px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.repeat-icon {
+  width: 23px;
+  height: 23px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .mode-button[aria-pressed="true"] {
   border-color: #65c7aa;
   background: #186d58;
@@ -432,6 +450,12 @@
     min-width: 64px;
     padding: 0 4px;
     font-size: 10px;
+  }
+
+  .repeat-button {
+    width: 42px;
+    min-width: 42px;
+    padding: 0;
   }
 
   .speed-button {

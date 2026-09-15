@@ -10,7 +10,7 @@
     <link rel="icon" href="./favicon.svg" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="stylesheet" href="./mobile.css?v=20260914-02" />
-    <link rel="stylesheet" href="./mobile-player.css?v=20260915-04" />
+    <link rel="stylesheet" href="./mobile-player.css?v=20260915-05" />
   </head>
   <body class="player-page">
     <header class="player-header">
@@ -40,7 +40,15 @@
             <button id="backButton" class="control-button" type="button" aria-label="后退 1 秒" title="后退 1 秒">↶<small>1</small></button>
             <button id="playButton" class="play-button" type="button" aria-label="播放" title="播放">▶</button>
             <button id="forwardButton" class="control-button" type="button" aria-label="前进 1 秒" title="前进 1 秒">↷<small>1</small></button>
-            <button id="repeatButton" class="mode-button" type="button" aria-pressed="false">单句循环</button>
+            <button id="repeatButton" class="mode-button repeat-button" type="button" aria-label="单句循环" title="单句循环" aria-pressed="false">
+              <svg class="repeat-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m17 2 4 4-4 4"></path>
+                <path d="M3 11v-1a4 4 0 0 1 4-4h14"></path>
+                <path d="m7 22-4-4 4-4"></path>
+                <path d="M21 13v1a4 4 0 0 1-4 4H3"></path>
+                <path d="M11 10h1v4"></path>
+              </svg>
+            </button>
             <div id="speedControl" class="speed-control">
               <button id="speedButton" class="speed-button" type="button" aria-label="播放速度" aria-haspopup="listbox" aria-expanded="false">1.0×</button>
               <div id="speedMenu" class="speed-menu" role="listbox" aria-label="选择播放速度" hidden>
@@ -84,6 +92,6 @@
     </section>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-    <script src="./mobile-player.js?v=20260915-04" defer></script>
+    <script src="./mobile-player.js?v=20260915-05" defer></script>
   </body>
 </html>
