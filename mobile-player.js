@@ -201,6 +201,11 @@
   }
 
   function configureSubtitleOverlay(transcript) {
+    if (transcript?.mobile_subtitles_burned_in === true) {
+      overlayJapaneseFromEmbedded = false;
+      overlayChineseFromEmbedded = false;
+      return;
+    }
     const processing = transcript?.subtitle_processing || {};
     const japaneseSources = Object.keys(processing.japanese_sources || {});
     overlayJapaneseFromEmbedded = String(transcript?.japanese_text_source || "").startsWith("embedded_")
