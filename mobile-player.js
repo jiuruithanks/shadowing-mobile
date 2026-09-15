@@ -81,6 +81,25 @@
   let activeRecording = null;
   let recordingAudioUrl = "";
   let recordingTimer = null;
+  let viewportSyncFrame = 0;
+
+  function syncViewportHeight() {
+    window.cancelAnimationFrame(viewportSyncFrame);
+    viewportSyncFrame = window.requestAnimationFrame(() => {
+      const height = window.visualViewport?.height || window.innerHeight;
+      if (Number.isFinite(height) && height > 0) {
+        document.body.style.setProperty("--app-height", `${Math.floor(height)}px`);
+      }
+    });
+  }
+
+  syncViewportHeight();
+  window.addEventListener("resize", syncViewportHeight);
+  window.visualViewport?.addEventListener("resize", syncViewportHeight);
+  window.addEventListener("orientationchange", () => {
+    syncViewportHeight();
+    window.setTimeout(syncViewportHeight, 250);
+  });
 
   function requestResult(request) {
     return new Promise((resolve, reject) => {
