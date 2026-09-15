@@ -140,7 +140,7 @@ label {
 
 .library-heading h1 {
   margin: 3px 0 0;
-  font-size: clamp(27px, 8vw, 36px);
+  font-size: 30px;
   line-height: 1.08;
 }
 
@@ -207,8 +207,7 @@ label {
 }
 
 .storage-summary span,
-.mobile-series-title span,
-.mobile-episode-info span {
+.mobile-series-title span {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
@@ -278,9 +277,24 @@ label {
   background: transparent;
 }
 
+.mobile-series-section {
+  position: relative;
+}
+
+.series-more {
+  position: absolute;
+  top: 19px;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink);
+}
+
 .mobile-series summary {
   min-height: 82px;
-  padding: 14px 4px;
+  padding: 14px 56px 14px 0;
   list-style: none;
   display: flex;
   align-items: center;
@@ -318,34 +332,37 @@ label {
 }
 
 .mobile-series-body {
-  border-top: 1px solid var(--line);
-}
-
-.mobile-episode-row {
-  min-height: 74px;
-  padding: 12px 4px;
-  border-bottom: 1px solid var(--line);
+  padding: 0 0 22px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+  gap: 10px;
 }
 
-.mobile-episode-info {
+.episode-number {
   min-width: 0;
+  height: 48px;
+  padding: 0 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
   display: grid;
-  gap: 4px;
+  place-items: center;
+  text-decoration: none;
+  font-size: 17px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }
 
-.mobile-episode-info strong {
-  overflow-wrap: anywhere;
-  font-size: 15px;
+.episode-number:active {
+  background: var(--green-soft);
+  border-color: var(--green);
+  color: var(--green-dark);
 }
 
-.mobile-episode-actions {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+:is(a, button, summary, select):focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 3px;
 }
 
 .button-primary,
@@ -369,18 +386,6 @@ label {
 .button-quiet-danger {
   border-color: #deb5b1;
   color: var(--red);
-}
-
-.mobile-series-footer {
-  padding: 12px 4px 16px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.mobile-series-footer button:disabled {
-  opacity: 0.45;
-  cursor: default;
 }
 
 .empty-state {
@@ -463,6 +468,109 @@ label {
   gap: 9px;
 }
 
+.library-dialog {
+  width: min(440px, calc(100% - 24px));
+  max-height: calc(100dvh - 40px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.library-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.library-dialog-header h2 {
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.library-dialog-header .icon-button {
+  flex: 0 0 44px;
+  height: 44px;
+  border: 0;
+  color: var(--muted);
+}
+
+.library-menu-action {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font-size: 15px;
+}
+
+.library-menu-action:last-child {
+  border-bottom: 0;
+}
+
+.library-menu-action:active {
+  background: var(--surface-muted);
+}
+
+.library-menu-action:disabled {
+  color: var(--muted);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.library-menu-action.is-danger {
+  color: var(--red);
+}
+
+.library-menu-back {
+  color: var(--green-dark);
+  font-size: 13px;
+}
+
+.episode-picker {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 16px 0;
+  font-size: 14px;
+}
+
+.episode-picker select {
+  min-width: 0;
+  flex: 1;
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface);
+  font-size: 16px;
+}
+
+.episode-file-info {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 14px 12px;
+  margin: 18px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.episode-file-info dt {
+  color: var(--muted);
+}
+
+.episode-file-info dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .is-offline .mobile-brand small::after {
   content: " · 离线";
   color: var(--green-dark);
@@ -473,18 +581,6 @@ label {
     padding-top: 22px;
   }
 
-  .mobile-episode-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .mobile-episode-actions {
-    justify-content: flex-end;
-  }
-
-  .mobile-episode-actions a,
-  .mobile-episode-actions button {
-    flex: 1;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

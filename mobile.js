@@ -25,6 +25,9 @@
     confirmDialog: document.querySelector("#confirmDialog"),
     confirmTitle: document.querySelector("#confirmTitle"),
     confirmMessage: document.querySelector("#confirmMessage"),
+    libraryDialog: document.querySelector("#libraryDialog"),
+    libraryDialogTitle: document.querySelector("#libraryDialogTitle"),
+    libraryDialogBody: document.querySelector("#libraryDialogBody"),
   };
   let databasePromise;
   let installPrompt;
@@ -517,31 +520,102 @@
     showToast("番剧项目已删除");
   }
 
-  function renderEpisode(series, episode, recordings = []) {
-    const row = document.createElement("div");
-    row.className = "mobile-episode-row";
-    const info = document.createElement("div");
-    info.className = "mobile-episode-info";
-    const title = document.createElement("strong");
-    title.textContent = episode.episodeLabel;
-    const meta = document.createElement("span");
-    const recordingText = recordings.length ? ` · ${recordings.length} 条录音` : "";
-    meta.textContent = `${formatDuration(episode.duration)} · ${episode.quality || "手机画质"} · ${formatBytes(episode.videoSize)}${recordingText}`;
-    info.append(title, meta);
-    const actions = document.createElement("div");
-    actions.className = "mobile-episode-actions";
+  function renderEpisode(series, episode, index) {
     const open = document.createElement("a");
-    open.className = "button-primary";
-    open.textContent = "打开";
+    open.className = "episode-number";
+    const number = Number(episode.episodeNumber);
+    open.textContent = Number.isFinite(number) && episode.episodeNumber != null ? String(number) : String(index + 1);
+    open.setAttribute("aria-label", `${series.title} · ${episode.episodeLabel}`);
+    open.title = episode.episodeLabel;
     open.href = `./mobile-player.html?series=${encodeURIComponent(series.key)}&episode=${encodeURIComponent(episode.projectId)}`;
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "button-quiet-danger";
-    remove.textContent = "删除";
-    remove.addEventListener("click", () => deleteEpisode(series, episode));
-    actions.append(open, remove);
-    row.append(info, actions);
-    return row;
+    return open;
+  }
+
+  function showLibraryDialog(title) {
+    elements.libraryDialogTitle.textContent = title;
+    elements.libraryDialogBody.replaceChildren();
+    if (!elements.libraryDialog.open) elements.libraryDialog.showModal();
+  }
+
+  function menuAction(label, action, { danger = false, disabled = false } = {}) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `library-menu-action${danger ? " is-danger" : ""}`;
+    button.textContent = label;
+    button.disabled = disabled;
+    button.addEventListener("click", () => {
+      Promise.resolve().then(action).catch((error) => showToast(error.message || "操作失败，请重试"));
+    });
+    return button;
+  }
+
+  function showEpisodeInfo(series, episodes, recordings, deleting = false) {
+    showLibraryDialog(deleting ? "删除单集" : "文件简介");
+    const back = menuAction("返回番剧菜单", () => showSeriesMenu(series, episodes, recordings));
+    back.classList.add("library-menu-back");
+    const label = document.createElement("label");
+    label.className = "episode-picker";
+    label.textContent = "集数";
+    const select = document.createElement("select");
+    episodes.forEach((episode, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = episode.episodeLabel;
+      select.append(option);
+    });
+    label.append(select);
+    const info = document.createElement("dl");
+    info.className = "episode-file-info";
+    const updateInfo = () => {
+      const episode = episodes[Number(select.value)];
+      const recordingCount = recordings.filter((item) => item.episodeStorageKey === episode.storageKey).length;
+      info.replaceChildren();
+      [
+        ["番剧", series.title],
+        ["时长", formatDuration(episode.duration)],
+        ["清晰度", episode.quality || "未记录"],
+        ["视频大小", formatBytes(episode.videoSize)],
+        ["录音", `${recordingCount} 条`],
+        ["来源文件", episode.sourceFile || "未记录"],
+      ].forEach(([name, value]) => {
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = name;
+        description.textContent = value;
+        info.append(term, description);
+      });
+    };
+    select.addEventListener("change", updateInfo);
+    updateInfo();
+    elements.libraryDialogBody.append(back, label, info);
+    if (deleting) {
+      elements.libraryDialogBody.append(menuAction("删除所选集数", () => {
+        const episode = episodes[Number(select.value)];
+        elements.libraryDialog.close();
+        return deleteEpisode(series, episode);
+      }, { danger: true }));
+    }
+    select.focus();
+  }
+
+  function showSeriesMenu(series, episodes, recordings) {
+    showLibraryDialog(series.title);
+    elements.libraryDialogBody.append(
+      menuAction("文件简介", () => showEpisodeInfo(series, episodes, recordings)),
+      menuAction(`导出录音 (${recordings.length})`, () => {
+        elements.libraryDialog.close();
+        return exportSeriesRecordings(series, recordings).catch((error) => {
+          updateImportProgress(0, error.message || "无法导出录音", "导出失败");
+          throw error;
+        });
+      }, { disabled: recordings.length === 0 }),
+      menuAction("删除单集", () => showEpisodeInfo(series, episodes, recordings, true), { danger: true }),
+      menuAction("删除整部番剧", () => {
+        elements.libraryDialog.close();
+        return deleteSeries(series, episodes.length);
+      }, { danger: true }),
+    );
+    elements.libraryDialogBody.querySelector("button").focus();
   }
 
   async function renderLibrary() {
@@ -556,12 +630,9 @@
       episodesBySeries.get(episode.seriesKey).push(episode);
     });
     const recordingsBySeries = new Map();
-    const recordingsByEpisode = new Map();
     recordingRecords.forEach((recording) => {
       if (!recordingsBySeries.has(recording.seriesKey)) recordingsBySeries.set(recording.seriesKey, []);
       recordingsBySeries.get(recording.seriesKey).push(recording);
-      if (!recordingsByEpisode.has(recording.episodeStorageKey)) recordingsByEpisode.set(recording.episodeStorageKey, []);
-      recordingsByEpisode.get(recording.episodeStorageKey).push(recording);
     });
     elements.library.replaceChildren();
     seriesRecords.sort((left, right) => String(right.importedAt).localeCompare(String(left.importedAt)));
@@ -571,48 +642,37 @@
       if (!episodes.length) return;
       const details = document.createElement("details");
       details.className = "mobile-series";
-      details.open = seriesRecords.length === 1;
+      details.open = true;
       const summary = document.createElement("summary");
       const titleBlock = document.createElement("span");
       titleBlock.className = "mobile-series-title";
       const title = document.createElement("strong");
       title.textContent = series.title;
-      const totalBytes = episodes.reduce((sum, episode) => sum + Number(episode.videoSize || 0), 0)
-        + recordings.reduce((sum, recording) => sum + Number(recording.size || 0), 0);
-      const qualities = [...new Set(episodes.map((episode) => episode.quality).filter(Boolean))];
       const meta = document.createElement("span");
-      const recordingText = recordings.length ? ` · ${recordings.length} 条录音` : "";
-      meta.textContent = `${episodes.length} 集 · ${qualities.join(" / ") || "手机画质"} · ${formatBytes(totalBytes)}${recordingText}`;
+      meta.textContent = `${episodes.length} 集`;
       titleBlock.append(title, meta);
       const chevron = document.createElement("span");
       chevron.className = "mobile-series-chevron";
       chevron.textContent = "⌄";
       chevron.setAttribute("aria-hidden", "true");
       summary.append(titleBlock, chevron);
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "icon-button series-more";
+      more.textContent = "···";
+      more.title = "番剧菜单";
+      more.setAttribute("aria-label", `${series.title} · 更多操作`);
+      more.setAttribute("aria-haspopup", "dialog");
+      more.addEventListener("click", () => showSeriesMenu(series, episodes, recordings));
       const body = document.createElement("div");
       body.className = "mobile-series-body";
-      episodes.forEach((episode) => body.append(renderEpisode(series, episode, recordingsByEpisode.get(episode.storageKey) || [])));
-      const footer = document.createElement("div");
-      footer.className = "mobile-series-footer";
-      const exportButton = document.createElement("button");
-      exportButton.type = "button";
-      exportButton.className = "button-primary";
-      exportButton.textContent = `导出录音${recordings.length ? ` (${recordings.length})` : ""}`;
-      exportButton.disabled = recordings.length === 0;
-      exportButton.addEventListener("click", () => {
-        exportSeriesRecordings(series, recordings).catch((error) => {
-          updateImportProgress(0, error.message || "无法导出录音", "导出失败");
-          showToast(error.message || "无法导出录音");
-        });
-      });
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "button-quiet-danger";
-      remove.textContent = "删除整部番剧";
-      remove.addEventListener("click", () => deleteSeries(series, episodes.length));
-      footer.append(exportButton, remove);
-      details.append(summary, body, footer);
-      elements.library.append(details);
+      body.setAttribute("aria-label", `${series.title} 选集`);
+      episodes.forEach((episode, index) => body.append(renderEpisode(series, episode, index)));
+      details.append(summary, body);
+      const section = document.createElement("section");
+      section.className = "mobile-series-section";
+      section.append(details, more);
+      elements.library.append(section);
     });
     const seriesCount = [...episodesBySeries.values()].filter((episodes) => episodes.length).length;
     const totalBytes = episodeRecords.reduce((sum, episode) => sum + Number(episode.videoSize || 0), 0)
@@ -623,6 +683,14 @@
   }
 
   elements.packageInput.addEventListener("change", () => importPackage(elements.packageInput.files?.[0]));
+  document.querySelector("#closeLibraryDialog").addEventListener("click", () => elements.libraryDialog.close());
+  elements.libraryDialog.addEventListener("click", (event) => {
+    if (event.target !== elements.libraryDialog) return;
+    const bounds = elements.libraryDialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
+      elements.libraryDialog.close();
+    }
+  });
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
     installPrompt = event;

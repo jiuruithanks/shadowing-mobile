@@ -11,7 +11,7 @@
     <link rel="icon" href="./favicon.svg" />
     <link rel="apple-touch-icon" href="./favicon.svg" />
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./mobile.css?v=20260915-03" />
+    <link rel="stylesheet" href="./mobile.css?v=20260916-02" />
   </head>
   <body>
     <header class="mobile-header">
@@ -71,6 +71,14 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
+    <dialog id="libraryDialog" class="confirm-dialog library-dialog" aria-labelledby="libraryDialogTitle">
+      <div class="library-dialog-header">
+        <h2 id="libraryDialogTitle"></h2>
+        <button id="closeLibraryDialog" class="icon-button" type="button" aria-label="关闭菜单" title="关闭">×</button>
+      </div>
+      <div id="libraryDialogBody"></div>
+    </dialog>
+
     <dialog id="confirmDialog" class="confirm-dialog">
       <form method="dialog">
         <h2 id="confirmTitle">删除项目</h2>
@@ -83,6 +91,6 @@
     </dialog>
 
     <script src="./mobile-package.js?v=20260915-02"></script>
-    <script src="./mobile.js?v=20260915-03" defer></script>
+    <script src="./mobile.js?v=20260916-02" defer></script>
   </body>
 </html>
