@@ -1,13 +1,13 @@
-const CACHE_NAME = "tokyo-shadowing-mobile-v12";
+const CACHE_NAME = "tokyo-shadowing-mobile-v13";
 const BASE_URL = new URL("./", self.location.href);
 const APP_SHELL_PATHS = [
   "mobile.html",
-  "mobile.css?v=20260914-02",
-  "mobile-package.js?v=20260914-01",
-  "mobile.js?v=20260914-02",
+  "mobile.css?v=20260915-03",
+  "mobile-package.js?v=20260915-02",
+  "mobile.js?v=20260915-03",
   "mobile-player.html",
-  "mobile-player.css?v=20260915-06",
-  "mobile-player.js?v=20260915-06",
+  "mobile-player.css?v=20260915-07",
+  "mobile-player.js?v=20260915-07",
   "manifest.webmanifest",
   "favicon.svg",
 ];

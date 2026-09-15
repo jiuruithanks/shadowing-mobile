@@ -9,6 +9,7 @@
   const CENTRAL_SIGNATURE = 0x02014b50;
   const LOCAL_SIGNATURE = 0x04034b50;
   const textDecoder = new TextDecoder("utf-8", { fatal: true });
+  const textEncoder = new TextEncoder();
 
   class PackageError extends Error {
     constructor(message, code = "invalid_package") {
@@ -294,6 +295,111 @@
     return hex(hasher.digest());
   }
 
+  const CRC32_TABLE = (() => {
+    const table = new Uint32Array(256);
+    for (let index = 0; index < table.length; index += 1) {
+      let value = index;
+      for (let bit = 0; bit < 8; bit += 1) {
+        value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+      }
+      table[index] = value >>> 0;
+    }
+    return table;
+  })();
+
+  async function crc32Blob(blob) {
+    let crc = 0xffffffff;
+    const chunkSize = 4 * 1024 * 1024;
+    for (let offset = 0; offset < blob.size; offset += chunkSize) {
+      const bytes = new Uint8Array(await blob.slice(offset, Math.min(blob.size, offset + chunkSize)).arrayBuffer());
+      for (let index = 0; index < bytes.length; index += 1) {
+        crc = CRC32_TABLE[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function dosDateTime(date = new Date()) {
+    const year = Math.max(1980, date.getFullYear());
+    return {
+      date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+      time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+    };
+  }
+
+  async function createStoredZip(inputEntries) {
+    if (!Array.isArray(inputEntries) || !inputEntries.length || inputEntries.length > 65535) {
+      throw new PackageError("导出文件数量异常");
+    }
+    const entries = [];
+    let localOffset = 0;
+    for (const input of inputEntries) {
+      const name = String(input?.name || "");
+      if (!safeEntryPath(name)) throw new PackageError("导出包包含不安全的文件路径");
+      const blob = input.data instanceof Blob
+        ? input.data
+        : new Blob([input.data], { type: input.type || "application/octet-stream" });
+      const nameBytes = textEncoder.encode(name);
+      if (nameBytes.length > 65535 || blob.size > 0xffffffff) throw new PackageError("单个录音过大，无法导出");
+      const crc = await crc32Blob(blob);
+      const stamp = dosDateTime(input.modifiedAt ? new Date(input.modifiedAt) : new Date());
+      const localHeader = new ArrayBuffer(30);
+      const local = new DataView(localHeader);
+      local.setUint32(0, LOCAL_SIGNATURE, true);
+      local.setUint16(4, 20, true);
+      local.setUint16(6, 0x0800, true);
+      local.setUint16(8, 0, true);
+      local.setUint16(10, stamp.time, true);
+      local.setUint16(12, stamp.date, true);
+      local.setUint32(14, crc, true);
+      local.setUint32(18, blob.size, true);
+      local.setUint32(22, blob.size, true);
+      local.setUint16(26, nameBytes.length, true);
+      local.setUint16(28, 0, true);
+      entries.push({ nameBytes, blob, crc, stamp, localHeader, localOffset });
+      localOffset += 30 + nameBytes.length + blob.size;
+      if (localOffset > 0xffffffff) throw new PackageError("录音包过大，无法导出");
+    }
+
+    const parts = [];
+    entries.forEach((entry) => parts.push(entry.localHeader, entry.nameBytes, entry.blob));
+    const directoryOffset = localOffset;
+    entries.forEach((entry) => {
+      const header = new ArrayBuffer(46);
+      const view = new DataView(header);
+      view.setUint32(0, CENTRAL_SIGNATURE, true);
+      view.setUint16(4, 20, true);
+      view.setUint16(6, 20, true);
+      view.setUint16(8, 0x0800, true);
+      view.setUint16(10, 0, true);
+      view.setUint16(12, entry.stamp.time, true);
+      view.setUint16(14, entry.stamp.date, true);
+      view.setUint32(16, entry.crc, true);
+      view.setUint32(20, entry.blob.size, true);
+      view.setUint32(24, entry.blob.size, true);
+      view.setUint16(28, entry.nameBytes.length, true);
+      view.setUint16(30, 0, true);
+      view.setUint16(32, 0, true);
+      view.setUint16(34, 0, true);
+      view.setUint16(36, 0, true);
+      view.setUint32(38, 0, true);
+      view.setUint32(42, entry.localOffset, true);
+      parts.push(header, entry.nameBytes);
+      localOffset += 46 + entry.nameBytes.length;
+    });
+    const directorySize = localOffset - directoryOffset;
+    const eocd = new ArrayBuffer(22);
+    const eocdView = new DataView(eocd);
+    eocdView.setUint32(0, EOCD_SIGNATURE, true);
+    eocdView.setUint16(8, entries.length, true);
+    eocdView.setUint16(10, entries.length, true);
+    eocdView.setUint32(12, directorySize, true);
+    eocdView.setUint32(16, directoryOffset, true);
+    parts.push(eocd);
+    return new Blob(parts, { type: "application/zip" });
+  }
+
   function requireString(value, message) {
     if (typeof value !== "string" || !value.trim()) throw new PackageError(message);
     return value.trim();
@@ -381,6 +487,7 @@
     SUPPORTED_VERSION,
     PackageError,
     Sha256,
+    createStoredZip,
     inspect,
     readEntries,
     sha256Blob,

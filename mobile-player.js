@@ -2,10 +2,12 @@
   "use strict";
 
   const DB_NAME = "tokyo-shadowing-mobile";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const SERIES_STORE = "series";
   const EPISODE_STORE = "episodes";
+  const RECORDING_STORE = "recordings";
   const VIDEO_DIRECTORY = "videos";
+  const RECORDING_DIRECTORY = "recordings";
   const AUTO_NEXT_KEY = "tokyo-shadowing:auto-next";
   const SPEED_KEY = "tokyo-shadowing:playback-speed";
   const CONTROLS_PINNED_KEY = "tokyo-shadowing:controls-pinned";
@@ -28,6 +30,15 @@
     speedControl: document.querySelector("#speedControl"),
     speedButton: document.querySelector("#speedButton"),
     speedMenu: document.querySelector("#speedMenu"),
+    recordButton: document.querySelector("#recordButton"),
+    recordingPanel: document.querySelector("#recordingPanel"),
+    recordingStatus: document.querySelector("#recordingStatus"),
+    recordingTime: document.querySelector("#recordingTime"),
+    recordingMeter: document.querySelector("#recordingMeter"),
+    recordingMeterLevel: document.querySelector("#recordingMeterLevel"),
+    recordingPlayButton: document.querySelector("#recordingPlayButton"),
+    recordingDeleteButton: document.querySelector("#recordingDeleteButton"),
+    recordingAudio: document.querySelector("#recordingAudio"),
     playerControls: document.querySelector("#playerControls"),
     timeline: document.querySelector("#timeline"),
     currentTime: document.querySelector("#currentTime"),
@@ -65,6 +76,10 @@
   let playbackSpeed = 1;
   let paneWidth = DEFAULT_PANE_WIDTH;
   let resizingPanes = false;
+  let episodeRecordings = new Map();
+  let activeRecording = null;
+  let recordingAudioUrl = "";
+  let recordingTimer = null;
 
   function requestResult(request) {
     return new Promise((resolve, reject) => {
@@ -86,6 +101,11 @@
           const store = database.createObjectStore(EPISODE_STORE, { keyPath: "storageKey" });
           store.createIndex("seriesKey", "seriesKey", { unique: false });
         }
+        if (!database.objectStoreNames.contains(RECORDING_STORE)) {
+          const store = database.createObjectStore(RECORDING_STORE, { keyPath: "storageKey" });
+          store.createIndex("seriesKey", "seriesKey", { unique: false });
+          store.createIndex("episodeStorageKey", "episodeStorageKey", { unique: false });
+        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error("无法打开手机本地存储"));
@@ -105,8 +125,97 @@
     return requestResult(store.getAll());
   }
 
+  function transactionDone(transaction) {
+    return new Promise((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error("无法保存手机录音"));
+      transaction.onabort = () => reject(transaction.error || new Error("手机录音保存已取消"));
+    });
+  }
+
+  async function getEpisodeRecordings(episodeStorageKey) {
+    const database = await openDatabase();
+    const store = database.transaction(RECORDING_STORE, "readonly").objectStore(RECORDING_STORE);
+    return requestResult(store.index("episodeStorageKey").getAll(episodeStorageKey));
+  }
+
   function storageKey(seriesKey, projectId) {
     return `${seriesKey}\u001f${projectId}`;
+  }
+
+  function segmentId(segment, index) {
+    return String(segment?.id ?? index);
+  }
+
+  function recordingStorageKey(record, segment, index) {
+    return `${record.storageKey}\u001f${segmentId(segment, index)}`;
+  }
+
+  function supportsPersistentFiles() {
+    return typeof navigator.storage?.getDirectory === "function";
+  }
+
+  async function recordingDirectory(create = false) {
+    const root = await navigator.storage.getDirectory();
+    return root.getDirectoryHandle(RECORDING_DIRECTORY, { create });
+  }
+
+  async function removeRecordingFile(fileName) {
+    if (!fileName || !supportsPersistentFiles()) return;
+    try {
+      const directory = await recordingDirectory(false);
+      await directory.removeEntry(fileName);
+    } catch (error) {
+      if (error?.name !== "NotFoundError") throw error;
+    }
+  }
+
+  async function recordingBlob(recording) {
+    if (recording?.fileName) {
+      const directory = await recordingDirectory(false);
+      const handle = await directory.getFileHandle(recording.fileName);
+      return handle.getFile();
+    }
+    if (recording?.blob instanceof Blob) return recording.blob;
+    throw new Error("这条录音文件不存在");
+  }
+
+  async function storeRecordingBlob(blob, fileName) {
+    const directory = await recordingDirectory(true);
+    const handle = await directory.getFileHandle(fileName, { create: true });
+    const writable = await handle.createWritable();
+    try {
+      await writable.write(blob);
+      await writable.close();
+    } catch (error) {
+      await writable.abort().catch(() => {});
+      await directory.removeEntry(fileName).catch(() => {});
+      throw error;
+    }
+  }
+
+  function recordingExtension(mimeType) {
+    const value = String(mimeType || "").toLowerCase();
+    if (value.includes("mp4") || value.includes("aac") || value.includes("m4a")) return "m4a";
+    if (value.includes("ogg")) return "ogg";
+    return "webm";
+  }
+
+  function preferredRecordingMimeType() {
+    if (!window.MediaRecorder?.isTypeSupported) return "";
+    return [
+      "audio/mp4;codecs=mp4a.40.2",
+      "audio/mp4",
+      "audio/webm;codecs=opus",
+      "audio/webm",
+    ].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+  }
+
+  function formatRecordingTime(milliseconds) {
+    const totalTenths = Math.max(0, Math.floor(Number(milliseconds || 0) / 100));
+    const minutes = Math.floor(totalTenths / 600);
+    const seconds = Math.floor((totalTenths % 600) / 10);
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${totalTenths % 10}`;
   }
 
   function readSetting(key, fallback) {
@@ -294,6 +403,7 @@
     if (index < 0 || !segments[index]) {
       elements.overlayJapanese.textContent = "";
       elements.overlayChinese.textContent = "";
+      renderRecordingState();
       return;
     }
     const segment = segments[index];
@@ -302,9 +412,14 @@
     const row = elements.transcriptList.querySelector(`[data-index="${index}"]`);
     row?.classList.add("is-active");
     if (scroll && row) row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    renderRecordingState();
   }
 
   function seekToSegment(index, autoplay = false) {
+    if (activeRecording) {
+      showToast("请先停止当前录音");
+      return;
+    }
     const segment = segments[index];
     if (!segment) return;
     elements.video.currentTime = segment.start;
@@ -330,11 +445,282 @@
       const chinese = document.createElement("span");
       chinese.textContent = chineseText(segment);
       copy.append(japanese, chinese);
-      row.append(time, copy);
+      const recordingMark = document.createElement("span");
+      recordingMark.className = "transcript-recording-mark";
+      recordingMark.textContent = "●";
+      recordingMark.setAttribute("aria-label", "已有录音");
+      row.append(time, copy, recordingMark);
       row.addEventListener("click", () => seekToSegment(index, false));
       fragment.append(row);
     });
     elements.transcriptList.replaceChildren(fragment);
+    syncRecordingMarks();
+  }
+
+  function recordingForIndex(index) {
+    const segment = segments[index];
+    if (!episodeRecord || !segment) return null;
+    return episodeRecordings.get(recordingStorageKey(episodeRecord, segment, index)) || null;
+  }
+
+  function syncRecordingMarks() {
+    elements.transcriptList.querySelectorAll(".transcript-row").forEach((row) => {
+      row.classList.toggle("has-recording", Boolean(recordingForIndex(Number(row.dataset.index))));
+    });
+  }
+
+  function clearRecordingAudio() {
+    elements.recordingAudio.pause();
+    elements.recordingAudio.removeAttribute("src");
+    elements.recordingAudio.load();
+    if (recordingAudioUrl) URL.revokeObjectURL(recordingAudioUrl);
+    recordingAudioUrl = "";
+    elements.recordingPlayButton.textContent = "▶";
+    elements.recordingPlayButton.setAttribute("aria-label", "播放这条录音");
+  }
+
+  function renderRecordingState() {
+    const hasSegment = activeIndex >= 0 && Boolean(segments[activeIndex]);
+    elements.recordButton.disabled = !hasSegment || !window.MediaRecorder || !navigator.mediaDevices?.getUserMedia;
+    if (activeRecording) {
+      elements.recordingPanel.hidden = false;
+      elements.recordButton.setAttribute("aria-pressed", "true");
+      elements.recordButton.setAttribute("aria-label", "停止录音");
+      elements.recordButton.title = "停止录音";
+      elements.recordingStatus.textContent = "正在录音";
+      elements.recordingMeter.hidden = false;
+      elements.recordingPlayButton.hidden = true;
+      elements.recordingDeleteButton.hidden = true;
+      return;
+    }
+    elements.recordButton.setAttribute("aria-pressed", "false");
+    elements.recordButton.setAttribute("aria-label", "为当前字幕录音");
+    elements.recordButton.title = "录音";
+    const saved = hasSegment ? recordingForIndex(activeIndex) : null;
+    elements.recordingPanel.hidden = !saved;
+    elements.recordingMeter.hidden = true;
+    elements.recordingMeterLevel.style.width = "0%";
+    elements.recordingStatus.textContent = saved ? "已保存本机" : "尚无录音";
+    elements.recordingTime.textContent = saved ? formatRecordingTime(Number(saved.duration || 0) * 1000) : "00:00.0";
+    elements.recordingPlayButton.hidden = !saved;
+    elements.recordingDeleteButton.hidden = !saved;
+    clearRecordingAudio();
+  }
+
+  function stopRecordingMeter(recording) {
+    window.clearInterval(recordingTimer);
+    recordingTimer = null;
+    if (recording?.meterFrame) window.cancelAnimationFrame(recording.meterFrame);
+    recording?.audioContext?.close().catch(() => {});
+    elements.recordingMeter.hidden = true;
+    elements.recordingMeterLevel.style.width = "0%";
+  }
+
+  function startRecordingMeter(recording) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    try {
+      recording.audioContext = new AudioContextClass();
+      recording.audioSource = recording.audioContext.createMediaStreamSource(recording.stream);
+      recording.analyser = recording.audioContext.createAnalyser();
+      recording.analyser.fftSize = 256;
+      recording.analyser.smoothingTimeConstant = 0.72;
+      recording.audioSource.connect(recording.analyser);
+      recording.meterSamples = new Uint8Array(recording.analyser.fftSize);
+      recording.audioContext.resume().catch(() => {});
+      const update = () => {
+        if (activeRecording !== recording || recording.recorder.state === "inactive") return;
+        recording.analyser.getByteTimeDomainData(recording.meterSamples);
+        let sum = 0;
+        recording.meterSamples.forEach((sample) => { sum += ((sample - 128) / 128) ** 2; });
+        const level = Math.min(100, Math.max(2, Math.sqrt(sum / recording.meterSamples.length) * 280));
+        elements.recordingMeterLevel.style.width = `${level}%`;
+        recording.meterFrame = window.requestAnimationFrame(update);
+      };
+      update();
+    } catch (_error) {
+      // Timer and recording remain available when the level meter is unsupported.
+    }
+  }
+
+  async function saveRecording(recording, blob) {
+    if (!blob.size) throw new Error("没有录到声音，请重新录音");
+    const previous = episodeRecordings.get(recording.storageKey);
+    const safeProject = String(recording.projectId).replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 72);
+    const safeSegment = String(recording.segmentId).replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 40);
+    const extension = recordingExtension(blob.type || recording.mimeType);
+    const fileName = `${safeProject}-${safeSegment}-${Date.now()}.${extension}`;
+    const value = {
+      storageKey: recording.storageKey,
+      seriesKey: recording.seriesKey,
+      episodeStorageKey: recording.episodeStorageKey,
+      projectId: recording.projectId,
+      episodeNumber: recording.episodeNumber,
+      episodeLabel: recording.episodeLabel,
+      segmentId: recording.segmentId,
+      segmentStart: recording.segmentStart,
+      japaneseText: recording.japaneseText,
+      chineseText: recording.chineseText,
+      fileName: "",
+      mimeType: blob.type || recording.mimeType || "application/octet-stream",
+      size: blob.size,
+      duration: Math.max(0.1, (performance.now() - recording.startedAt) / 1000),
+      savedAt: new Date().toISOString(),
+    };
+    if (supportsPersistentFiles()) {
+      await storeRecordingBlob(blob, fileName);
+      value.fileName = fileName;
+    } else {
+      value.blob = blob;
+    }
+    try {
+      const database = await openDatabase();
+      const transaction = database.transaction(RECORDING_STORE, "readwrite");
+      transaction.objectStore(RECORDING_STORE).put(value);
+      await transactionDone(transaction);
+    } catch (error) {
+      await removeRecordingFile(value.fileName).catch(() => {});
+      throw error;
+    }
+    if (previous?.fileName && previous.fileName !== value.fileName) {
+      await removeRecordingFile(previous.fileName).catch(() => {});
+    }
+    episodeRecordings.set(value.storageKey, value);
+    syncRecordingMarks();
+  }
+
+  async function finishRecording(recording, blob) {
+    stopRecordingMeter(recording);
+    recording.stream.getTracks().forEach((track) => track.stop());
+    elements.recordingStatus.textContent = "正在保存";
+    try {
+      await saveRecording(recording, blob);
+      showToast("录音已保存在本机");
+    } catch (error) {
+      showToast(error.message || "录音保存失败");
+    } finally {
+      if (activeRecording === recording) activeRecording = null;
+      renderRecordingState();
+      showControls();
+    }
+  }
+
+  function stopCurrentRecording() {
+    const recording = activeRecording;
+    if (!recording || recording.recorder.state === "inactive") return;
+    recording.recorder.stop();
+  }
+
+  async function startRecording() {
+    if (activeRecording) {
+      stopCurrentRecording();
+      return;
+    }
+    let index = activeIndex;
+    if (index < 0) index = nearestSegmentIndex(elements.video.currentTime);
+    const segment = segments[index];
+    if (!segment || !episodeRecord) {
+      showToast("请先播放或选择一句字幕");
+      return;
+    }
+    setActiveSegment(index, true);
+    setPlayback(false);
+    clearRecordingAudio();
+    elements.recordingPanel.hidden = false;
+    elements.recordingStatus.textContent = "正在请求麦克风";
+    showControls();
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: { ideal: true },
+          noiseSuppression: { ideal: true },
+          autoGainControl: { ideal: true },
+          channelCount: { ideal: 1 },
+          sampleRate: { ideal: 48000 },
+        },
+        video: false,
+      });
+      const mimeType = preferredRecordingMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType, audioBitsPerSecond: 128000 } : undefined);
+      const recording = {
+        recorder,
+        stream,
+        chunks: [],
+        startedAt: performance.now(),
+        mimeType,
+        index,
+        storageKey: recordingStorageKey(episodeRecord, segment, index),
+        seriesKey: episodeRecord.seriesKey,
+        episodeStorageKey: episodeRecord.storageKey,
+        projectId: episodeRecord.projectId,
+        episodeNumber: episodeRecord.episodeNumber,
+        episodeLabel: episodeRecord.episodeLabel,
+        segmentId: Number(segment.id ?? index),
+        segmentStart: Number(segment.start),
+        japaneseText: japaneseText(segment),
+        chineseText: chineseText(segment),
+      };
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data?.size) recording.chunks.push(event.data);
+      });
+      recorder.addEventListener("stop", () => {
+        const type = recorder.mimeType || mimeType || recording.chunks[0]?.type || "application/octet-stream";
+        finishRecording(recording, new Blob(recording.chunks, { type }));
+      }, { once: true });
+      recorder.addEventListener("error", () => {
+        showToast("录音过程中发生错误");
+        stopCurrentRecording();
+      });
+      activeRecording = recording;
+      recorder.start(250);
+      recordingTimer = window.setInterval(() => {
+        elements.recordingTime.textContent = formatRecordingTime(performance.now() - recording.startedAt);
+      }, 100);
+      startRecordingMeter(recording);
+      renderRecordingState();
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      activeRecording = null;
+      renderRecordingState();
+      const denied = error?.name === "NotAllowedError" || error?.name === "SecurityError";
+      showToast(denied ? "请允许网页使用麦克风后重试" : (error.message || "无法开始录音"));
+    }
+  }
+
+  async function toggleRecordingPlayback() {
+    if (activeRecording) return;
+    if (!elements.recordingAudio.paused) {
+      elements.recordingAudio.pause();
+      return;
+    }
+    const saved = recordingForIndex(activeIndex);
+    if (!saved) return;
+    try {
+      setPlayback(false);
+      clearRecordingAudio();
+      recordingAudioUrl = URL.createObjectURL(await recordingBlob(saved));
+      elements.recordingAudio.src = recordingAudioUrl;
+      await elements.recordingAudio.play();
+    } catch (error) {
+      showToast(error.message || "无法播放录音");
+    }
+  }
+
+  async function deleteActiveRecording() {
+    if (activeRecording) return;
+    const saved = recordingForIndex(activeIndex);
+    if (!saved || !window.confirm("删除当前字幕的录音？")) return;
+    clearRecordingAudio();
+    const database = await openDatabase();
+    const transaction = database.transaction(RECORDING_STORE, "readwrite");
+    transaction.objectStore(RECORDING_STORE).delete(saved.storageKey);
+    await transactionDone(transaction);
+    await removeRecordingFile(saved.fileName).catch(() => {});
+    episodeRecordings.delete(saved.storageKey);
+    syncRecordingMarks();
+    renderRecordingState();
+    showToast("录音已删除");
   }
 
   function updateTimeline() {
@@ -345,9 +731,9 @@
   function showControls() {
     window.clearTimeout(controlsTimer);
     elements.playerShell.classList.remove("controls-hidden");
-    if (!controlsPinned && !controlsInteracting && elements.speedMenu.hidden && (!elements.video.paused || playbackIntent)) {
+    if (!controlsPinned && !controlsInteracting && !activeRecording && elements.speedMenu.hidden && (!elements.video.paused || playbackIntent)) {
       controlsTimer = window.setTimeout(() => {
-        if (controlsPinned || controlsInteracting || !elements.speedMenu.hidden || elements.video.paused) return;
+        if (controlsPinned || controlsInteracting || activeRecording || !elements.speedMenu.hidden || elements.video.paused) return;
         elements.playerShell.classList.add("controls-hidden");
       }, CONTROLS_HIDE_DELAY);
     }
@@ -508,6 +894,8 @@
   }
 
   async function loadEpisode(seriesKey, projectId, autoplay = false) {
+    if (activeRecording) stopCurrentRecording();
+    clearRecordingAudio();
     let record = await getRecord(EPISODE_STORE, storageKey(seriesKey, projectId));
     if (!record) {
       const allEpisodes = await getAllEpisodes();
@@ -532,6 +920,7 @@
     seriesRecord = series;
     seriesEpisodes = availableEpisodes;
     segments = normalizedSegments(record.transcript);
+    episodeRecordings = new Map((await getEpisodeRecordings(record.storageKey)).map((item) => [item.storageKey, item]));
     activeIndex = -2;
     repeatIndex = -1;
     repeatEnabled = false;
@@ -604,6 +993,20 @@
     }
     elements.repeatButton.setAttribute("aria-pressed", String(repeatEnabled));
     showControls();
+  });
+  elements.recordButton.addEventListener("click", startRecording);
+  elements.recordingPlayButton.addEventListener("click", toggleRecordingPlayback);
+  elements.recordingDeleteButton.addEventListener("click", () => {
+    deleteActiveRecording().catch((error) => showToast(error.message || "无法删除录音"));
+  });
+  elements.recordingAudio.addEventListener("play", () => {
+    elements.recordingPlayButton.textContent = "❚❚";
+    elements.recordingPlayButton.setAttribute("aria-label", "暂停这条录音");
+    showControls();
+  });
+  elements.recordingAudio.addEventListener("pause", () => {
+    elements.recordingPlayButton.textContent = "▶";
+    elements.recordingPlayButton.setAttribute("aria-label", "播放这条录音");
   });
   applyPlaybackSpeed(readSetting(SPEED_KEY, "1"), false);
   elements.speedButton.addEventListener("click", (event) => {
@@ -701,7 +1104,7 @@
   window.addEventListener("pointercancel", releaseControls);
   elements.playerShell.addEventListener("pointermove", showControls);
   elements.playerShell.addEventListener("pointerleave", () => {
-    if (!controlsPinned && !controlsInteracting && elements.speedMenu.hidden) showControls();
+    if (!controlsPinned && !controlsInteracting && !activeRecording && elements.speedMenu.hidden) showControls();
   });
   elements.playerShell.addEventListener("click", (event) => {
     if (event.target.closest(".player-controls")) return;
@@ -718,7 +1121,11 @@
   });
   document.addEventListener("fullscreenchange", showControls);
   window.addEventListener("pagehide", () => {
+    stopCurrentRecording();
     savePlayback(false);
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopCurrentRecording();
   });
   window.addEventListener("pageshow", (event) => {
     if (!event.persisted || !episodeRecord) return;

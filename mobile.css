@@ -375,6 +375,12 @@ label {
   padding: 12px 4px 16px;
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.mobile-series-footer button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .empty-state {

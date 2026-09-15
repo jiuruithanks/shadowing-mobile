@@ -207,7 +207,9 @@
 .control-button,
 .play-button,
 .mode-button,
-.speed-button {
+.speed-button,
+.record-button,
+.recording-action {
   height: 42px;
   border: 1px solid #64736b;
   border-radius: 6px;
@@ -277,6 +279,100 @@
   width: 60px;
   padding: 0 5px;
   font-size: 11px;
+}
+
+.record-button {
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid #64736b;
+  border-radius: 6px;
+  background: rgb(20 29 25 / 90%);
+  color: #fff;
+  display: grid;
+  place-items: center;
+}
+
+.record-button svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.record-button[aria-pressed="true"] {
+  border-color: #ffafa6;
+  background: #b63c33;
+  color: #fff;
+}
+
+.recording-panel {
+  min-height: 38px;
+  padding: 5px 4px 1px;
+  border-top: 1px solid rgb(132 151 141 / 52%);
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(54px, 1fr) 40px 48px;
+  align-items: center;
+  gap: 7px;
+}
+
+.recording-panel[hidden] {
+  display: none;
+}
+
+.recording-state {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+}
+
+.recording-state strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recording-state time {
+  color: #c8d3ce;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.recording-meter {
+  height: 7px;
+  border-radius: 4px;
+  background: #536159;
+  overflow: hidden;
+}
+
+.recording-meter span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: #65c7aa;
+}
+
+.recording-action {
+  width: 40px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #64736b;
+  border-radius: 5px;
+  background: #17211c;
+  color: #fff;
+  font-size: 11px;
+}
+
+.recording-action.is-danger {
+  width: 48px;
+  border-color: #b98a85;
+  color: #ffd8d3;
 }
 
 .speed-menu {
@@ -381,11 +477,28 @@
   background: transparent;
   color: inherit;
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
+  grid-template-columns: 48px minmax(0, 1fr) 22px;
   align-items: start;
   gap: 9px;
   cursor: pointer;
   text-align: left;
+}
+
+.transcript-recording-mark {
+  width: 21px;
+  height: 21px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: var(--green-dark);
+  color: #fff;
+  display: none;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.transcript-row.has-recording .transcript-recording-mark {
+  display: grid;
 }
 
 .transcript-row time {
@@ -461,6 +574,11 @@
   .speed-button {
     width: 52px;
     padding: 0 2px;
+  }
+
+  .record-button {
+    width: 36px;
+    min-width: 36px;
   }
 
   .player-auto-next {
@@ -574,7 +692,7 @@
   .transcript-row {
     padding-right: 4px;
     padding-left: 4px;
-    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-columns: 44px minmax(0, 1fr) 22px;
     gap: 6px;
   }
 

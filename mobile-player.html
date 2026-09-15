@@ -9,8 +9,8 @@
     <title>跟读播放 · 東京シャドーイング</title>
     <link rel="icon" href="./favicon.svg" />
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./mobile.css?v=20260914-02" />
-    <link rel="stylesheet" href="./mobile-player.css?v=20260915-06" />
+    <link rel="stylesheet" href="./mobile.css?v=20260915-03" />
+    <link rel="stylesheet" href="./mobile-player.css?v=20260915-07" />
   </head>
   <body class="player-page">
     <header class="player-header">
@@ -60,10 +60,29 @@
                 <button type="button" role="option" data-speed="0.5" aria-selected="false">0.5×</button>
               </div>
             </div>
+            <button id="recordButton" class="record-button" type="button" aria-label="为当前字幕录音" title="录音" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <path d="M12 19v3"></path>
+              </svg>
+            </button>
             <label class="auto-next-control player-auto-next">
               <input id="autoNext" type="checkbox" aria-label="自动下一集" />
               <span>下一集</span>
             </label>
+          </div>
+          <div id="recordingPanel" class="recording-panel" hidden>
+            <div class="recording-state">
+              <strong id="recordingStatus">尚无录音</strong>
+              <time id="recordingTime">00:00.0</time>
+            </div>
+            <div id="recordingMeter" class="recording-meter" hidden aria-label="麦克风音量">
+              <span id="recordingMeterLevel"></span>
+            </div>
+            <button id="recordingPlayButton" class="recording-action" type="button" hidden aria-label="播放这条录音" title="播放录音">▶</button>
+            <button id="recordingDeleteButton" class="recording-action is-danger" type="button" hidden aria-label="删除这条录音" title="删除录音">删除</button>
+            <audio id="recordingAudio" preload="metadata" hidden></audio>
           </div>
         </div>
       </section>
@@ -92,6 +111,6 @@
     </section>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-    <script src="./mobile-player.js?v=20260915-06" defer></script>
+    <script src="./mobile-player.js?v=20260915-07" defer></script>
   </body>
 </html>

@@ -2,10 +2,12 @@
   "use strict";
 
   const DB_NAME = "tokyo-shadowing-mobile";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const SERIES_STORE = "series";
   const EPISODE_STORE = "episodes";
+  const RECORDING_STORE = "recordings";
   const VIDEO_DIRECTORY = "videos";
+  const RECORDING_DIRECTORY = "recordings";
   const elements = {
     packageInput: document.querySelector("#packageInput"),
     installButton: document.querySelector("#installButton"),
@@ -56,6 +58,11 @@
           const store = database.createObjectStore(EPISODE_STORE, { keyPath: "storageKey" });
           store.createIndex("seriesKey", "seriesKey", { unique: false });
         }
+        if (!database.objectStoreNames.contains(RECORDING_STORE)) {
+          const store = database.createObjectStore(RECORDING_STORE, { keyPath: "storageKey" });
+          store.createIndex("seriesKey", "seriesKey", { unique: false });
+          store.createIndex("episodeStorageKey", "episodeStorageKey", { unique: false });
+        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error("无法打开手机本地存储"));
@@ -76,6 +83,18 @@
     return requestResult(transaction.objectStore(EPISODE_STORE).index("seriesKey").getAll(seriesKey));
   }
 
+  async function recordingsForSeries(seriesKey) {
+    const database = await openDatabase();
+    const transaction = database.transaction(RECORDING_STORE, "readonly");
+    return requestResult(transaction.objectStore(RECORDING_STORE).index("seriesKey").getAll(seriesKey));
+  }
+
+  async function recordingsForEpisode(episodeStorageKey) {
+    const database = await openDatabase();
+    const transaction = database.transaction(RECORDING_STORE, "readonly");
+    return requestResult(transaction.objectStore(RECORDING_STORE).index("episodeStorageKey").getAll(episodeStorageKey));
+  }
+
   function episodeStorageKey(seriesKey, projectId) {
     return `${seriesKey}\u001f${projectId}`;
   }
@@ -94,6 +113,11 @@
   async function videoDirectory(create = false) {
     const root = await navigator.storage.getDirectory();
     return root.getDirectoryHandle(VIDEO_DIRECTORY, { create });
+  }
+
+  async function recordingDirectory(create = false) {
+    const root = await navigator.storage.getDirectory();
+    return root.getDirectoryHandle(RECORDING_DIRECTORY, { create });
   }
 
   async function storeVideoFile(blob, fileName, onProgress = () => {}) {
@@ -123,6 +147,26 @@
     } catch (error) {
       if (error?.name !== "NotFoundError") throw error;
     }
+  }
+
+  async function removeRecordingFile(fileName) {
+    if (!fileName || !supportsPersistentFiles()) return;
+    try {
+      const directory = await recordingDirectory(false);
+      await directory.removeEntry(fileName);
+    } catch (error) {
+      if (error?.name !== "NotFoundError") throw error;
+    }
+  }
+
+  async function recordingBlob(recording) {
+    if (recording.fileName) {
+      const directory = await recordingDirectory(false);
+      const handle = await directory.getFileHandle(recording.fileName);
+      return handle.getFile();
+    }
+    if (recording.blob instanceof Blob) return recording.blob;
+    throw new Error(`${recording.episodeLabel || "某一集"}有一条录音文件不存在`);
   }
 
   async function hasVideoFile(fileName, expectedSize) {
@@ -352,38 +396,128 @@
     }
   }
 
+  function safeFilePart(value, fallback) {
+    const cleaned = String(value || "").trim().replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "_").replace(/\s+/g, " ");
+    return (cleaned || fallback).slice(0, 80);
+  }
+
+  function recordingFileExtension(recording) {
+    const existing = String(recording.fileName || "").match(/\.([a-zA-Z0-9]{2,5})$/)?.[1];
+    if (existing) return existing.toLowerCase();
+    const mimeType = String(recording.mimeType || "").toLowerCase();
+    if (mimeType.includes("mp4") || mimeType.includes("aac") || mimeType.includes("m4a")) return "m4a";
+    if (mimeType.includes("ogg")) return "ogg";
+    return "webm";
+  }
+
+  async function deliverRecordingPackage(series, packageBlob) {
+    const fileName = `${safeFilePart(series.title, "手机跟读录音")}.shadowing-recordings`;
+    const file = new File([packageBlob], fileName, { type: "application/zip" });
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: `${series.title} 手机跟读录音` });
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+      }
+    }
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  async function exportSeriesRecordings(series, recordings) {
+    if (!recordings.length) {
+      showToast("这部番剧还没有手机录音");
+      return;
+    }
+    updateImportProgress(2, `准备 ${recordings.length} 条录音`, "正在导出手机录音");
+    const files = [];
+    const manifestRecordings = [];
+    for (let index = 0; index < recordings.length; index += 1) {
+      const recording = recordings[index];
+      const blob = await recordingBlob(recording);
+      const extension = recordingFileExtension(recording);
+      const path = `recordings/${safeFilePart(recording.projectId, "episode")}/${safeFilePart(recording.segmentId, String(index))}.${extension}`;
+      updateImportProgress(5 + (index / recordings.length) * 70, `校验 ${recording.episodeLabel || "录音"}`, "正在导出手机录音");
+      const sha256 = await ShadowingPackage.sha256Blob(blob);
+      files.push({ name: path, data: blob, modifiedAt: recording.savedAt });
+      manifestRecordings.push({
+        project_id: String(recording.projectId),
+        episode_number: recording.episodeNumber,
+        episode_label: String(recording.episodeLabel || ""),
+        segment_id: Number(recording.segmentId),
+        segment_start: Number(recording.segmentStart || 0),
+        japanese_text: String(recording.japaneseText || ""),
+        chinese_text: String(recording.chineseText || ""),
+        path,
+        mime_type: String(blob.type || recording.mimeType || "application/octet-stream"),
+        size: blob.size,
+        sha256,
+        saved_at: recording.savedAt || new Date().toISOString(),
+      });
+    }
+    const manifest = {
+      format: "japanese-shadowing-mobile-recordings",
+      version: 1,
+      created_at: new Date().toISOString(),
+      series: { key: String(series.key), title: String(series.title) },
+      recordings: manifestRecordings,
+    };
+    files.unshift({
+      name: "manifest.json",
+      data: new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }),
+    });
+    updateImportProgress(78, "正在生成录音包", "正在导出手机录音");
+    const packageBlob = await ShadowingPackage.createStoredZip(files);
+    updateImportProgress(100, `${recordings.length} 条录音已打包`, "导出完成");
+    await deliverRecordingPackage(series, packageBlob);
+    showToast(`已导出 ${recordings.length} 条录音`);
+    window.setTimeout(() => { elements.importStatus.hidden = true; }, 2200);
+  }
+
   async function deleteEpisode(series, episode) {
-    const confirmed = await confirmAction("删除这一集？", `${episode.episodeLabel} 的视频、字幕、笔记和进度将从手机删除。`);
+    const confirmed = await confirmAction("删除这一集？", `${episode.episodeLabel} 的视频、字幕、录音、笔记和进度将从手机删除。`);
     if (!confirmed) return;
+    const recordings = await recordingsForEpisode(episode.storageKey);
     const database = await openDatabase();
-    const transaction = database.transaction([SERIES_STORE, EPISODE_STORE], "readwrite");
+    const transaction = database.transaction([SERIES_STORE, EPISODE_STORE, RECORDING_STORE], "readwrite");
     transaction.objectStore(EPISODE_STORE).delete(episode.storageKey);
+    recordings.forEach((recording) => transaction.objectStore(RECORDING_STORE).delete(recording.storageKey));
     const remainingRequest = transaction.objectStore(EPISODE_STORE).index("seriesKey").count(series.key);
     remainingRequest.onsuccess = () => {
       if (remainingRequest.result === 0) transaction.objectStore(SERIES_STORE).delete(series.key);
     };
     await transactionDone(transaction);
     await removeVideoFile(episode.videoFileName).catch(() => {});
+    await Promise.all(recordings.map((recording) => removeRecordingFile(recording.fileName).catch(() => {})));
     await renderLibrary();
     showToast("这一集已删除");
   }
 
   async function deleteSeries(series, episodeCount) {
-    const confirmed = await confirmAction("删除整部番剧？", `${series.title} 的 ${episodeCount} 集本地内容将全部删除。`);
+    const confirmed = await confirmAction("删除整部番剧？", `${series.title} 的 ${episodeCount} 集视频、字幕和录音将全部删除。`);
     if (!confirmed) return;
-    const episodes = await episodesForSeries(series.key);
+    const [episodes, recordings] = await Promise.all([episodesForSeries(series.key), recordingsForSeries(series.key)]);
     const database = await openDatabase();
-    const transaction = database.transaction([SERIES_STORE, EPISODE_STORE], "readwrite");
+    const transaction = database.transaction([SERIES_STORE, EPISODE_STORE, RECORDING_STORE], "readwrite");
     const episodeStore = transaction.objectStore(EPISODE_STORE);
     episodes.forEach((episode) => episodeStore.delete(episode.storageKey));
+    recordings.forEach((recording) => transaction.objectStore(RECORDING_STORE).delete(recording.storageKey));
     transaction.objectStore(SERIES_STORE).delete(series.key);
     await transactionDone(transaction);
     await Promise.all(episodes.map((episode) => removeVideoFile(episode.videoFileName).catch(() => {})));
+    await Promise.all(recordings.map((recording) => removeRecordingFile(recording.fileName).catch(() => {})));
     await renderLibrary();
     showToast("番剧项目已删除");
   }
 
-  function renderEpisode(series, episode) {
+  function renderEpisode(series, episode, recordings = []) {
     const row = document.createElement("div");
     row.className = "mobile-episode-row";
     const info = document.createElement("div");
@@ -391,7 +525,8 @@
     const title = document.createElement("strong");
     title.textContent = episode.episodeLabel;
     const meta = document.createElement("span");
-    meta.textContent = `${formatDuration(episode.duration)} · ${episode.quality || "手机画质"} · ${formatBytes(episode.videoSize)}`;
+    const recordingText = recordings.length ? ` · ${recordings.length} 条录音` : "";
+    meta.textContent = `${formatDuration(episode.duration)} · ${episode.quality || "手机画质"} · ${formatBytes(episode.videoSize)}${recordingText}`;
     info.append(title, meta);
     const actions = document.createElement("div");
     actions.className = "mobile-episode-actions";
@@ -410,19 +545,29 @@
   }
 
   async function renderLibrary() {
-    const [seriesRecords, episodeRecords] = await Promise.all([
+    const [seriesRecords, episodeRecords, recordingRecords] = await Promise.all([
       allRecords(SERIES_STORE),
       allRecords(EPISODE_STORE),
+      allRecords(RECORDING_STORE),
     ]);
     const episodesBySeries = new Map();
     episodeRecords.forEach((episode) => {
       if (!episodesBySeries.has(episode.seriesKey)) episodesBySeries.set(episode.seriesKey, []);
       episodesBySeries.get(episode.seriesKey).push(episode);
     });
+    const recordingsBySeries = new Map();
+    const recordingsByEpisode = new Map();
+    recordingRecords.forEach((recording) => {
+      if (!recordingsBySeries.has(recording.seriesKey)) recordingsBySeries.set(recording.seriesKey, []);
+      recordingsBySeries.get(recording.seriesKey).push(recording);
+      if (!recordingsByEpisode.has(recording.episodeStorageKey)) recordingsByEpisode.set(recording.episodeStorageKey, []);
+      recordingsByEpisode.get(recording.episodeStorageKey).push(recording);
+    });
     elements.library.replaceChildren();
     seriesRecords.sort((left, right) => String(right.importedAt).localeCompare(String(left.importedAt)));
     seriesRecords.forEach((series) => {
       const episodes = (episodesBySeries.get(series.key) || []).sort(episodeSort);
+      const recordings = recordingsBySeries.get(series.key) || [];
       if (!episodes.length) return;
       const details = document.createElement("details");
       details.className = "mobile-series";
@@ -432,10 +577,12 @@
       titleBlock.className = "mobile-series-title";
       const title = document.createElement("strong");
       title.textContent = series.title;
-      const totalBytes = episodes.reduce((sum, episode) => sum + Number(episode.videoSize || 0), 0);
+      const totalBytes = episodes.reduce((sum, episode) => sum + Number(episode.videoSize || 0), 0)
+        + recordings.reduce((sum, recording) => sum + Number(recording.size || 0), 0);
       const qualities = [...new Set(episodes.map((episode) => episode.quality).filter(Boolean))];
       const meta = document.createElement("span");
-      meta.textContent = `${episodes.length} 集 · ${qualities.join(" / ") || "手机画质"} · ${formatBytes(totalBytes)}`;
+      const recordingText = recordings.length ? ` · ${recordings.length} 条录音` : "";
+      meta.textContent = `${episodes.length} 集 · ${qualities.join(" / ") || "手机画质"} · ${formatBytes(totalBytes)}${recordingText}`;
       titleBlock.append(title, meta);
       const chevron = document.createElement("span");
       chevron.className = "mobile-series-chevron";
@@ -444,20 +591,32 @@
       summary.append(titleBlock, chevron);
       const body = document.createElement("div");
       body.className = "mobile-series-body";
-      episodes.forEach((episode) => body.append(renderEpisode(series, episode)));
+      episodes.forEach((episode) => body.append(renderEpisode(series, episode, recordingsByEpisode.get(episode.storageKey) || [])));
       const footer = document.createElement("div");
       footer.className = "mobile-series-footer";
+      const exportButton = document.createElement("button");
+      exportButton.type = "button";
+      exportButton.className = "button-primary";
+      exportButton.textContent = `导出录音${recordings.length ? ` (${recordings.length})` : ""}`;
+      exportButton.disabled = recordings.length === 0;
+      exportButton.addEventListener("click", () => {
+        exportSeriesRecordings(series, recordings).catch((error) => {
+          updateImportProgress(0, error.message || "无法导出录音", "导出失败");
+          showToast(error.message || "无法导出录音");
+        });
+      });
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "button-quiet-danger";
       remove.textContent = "删除整部番剧";
       remove.addEventListener("click", () => deleteSeries(series, episodes.length));
-      footer.append(remove);
+      footer.append(exportButton, remove);
       details.append(summary, body, footer);
       elements.library.append(details);
     });
     const seriesCount = [...episodesBySeries.values()].filter((episodes) => episodes.length).length;
-    const totalBytes = episodeRecords.reduce((sum, episode) => sum + Number(episode.videoSize || 0), 0);
+    const totalBytes = episodeRecords.reduce((sum, episode) => sum + Number(episode.videoSize || 0), 0)
+      + recordingRecords.reduce((sum, recording) => sum + Number(recording.size || 0), 0);
     elements.projectSummary.textContent = `${seriesCount} 部 · ${episodeRecords.length} 集`;
     elements.storageUsage.textContent = formatBytes(totalBytes);
     elements.emptyState.hidden = episodeRecords.length > 0;
