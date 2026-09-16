@@ -80,6 +80,9 @@
   let episodeRecordings = new Map();
   let activeRecording = null;
   let recordingAudioUrl = "";
+  let preparedRecording = null;
+  let recordingLoadSequence = 0;
+  let recordingPlaybackPending = false;
   let recordingTimer = null;
   let viewportSyncFrame = 0;
 
@@ -492,6 +495,8 @@
   }
 
   function clearRecordingAudio() {
+    recordingLoadSequence += 1;
+    preparedRecording = null;
     elements.recordingAudio.pause();
     elements.recordingAudio.removeAttribute("src");
     elements.recordingAudio.load();
@@ -499,6 +504,26 @@
     recordingAudioUrl = "";
     elements.recordingPlayButton.textContent = "▶";
     elements.recordingPlayButton.setAttribute("aria-label", "播放这条录音");
+  }
+
+  async function prepareRecordingAudio(saved, blob) {
+    if (preparedRecording === saved && recordingAudioUrl) return true;
+    clearRecordingAudio();
+    const sequence = recordingLoadSequence;
+    elements.recordingPlayButton.disabled = true;
+    try {
+      const source = blob || await recordingBlob(saved);
+      // A different sentence may have been selected while local storage was read.
+      if (sequence !== recordingLoadSequence) return false;
+      recordingAudioUrl = URL.createObjectURL(source);
+      preparedRecording = saved;
+      elements.recordingAudio.src = recordingAudioUrl;
+      elements.recordingAudio.preload = "auto";
+      elements.recordingAudio.load();
+      return true;
+    } finally {
+      if (sequence === recordingLoadSequence) elements.recordingPlayButton.disabled = false;
+    }
   }
 
   function renderRecordingState() {
@@ -526,16 +551,28 @@
     elements.recordingTime.textContent = saved ? formatRecordingTime(Number(saved.duration || 0) * 1000) : "00:00.0";
     elements.recordingPlayButton.hidden = !saved;
     elements.recordingDeleteButton.hidden = !saved;
-    clearRecordingAudio();
+    if (!saved) clearRecordingAudio();
+    else if (preparedRecording !== saved) {
+      prepareRecordingAudio(saved).catch((error) => showToast(error.message || "无法读取录音"));
+    }
   }
 
-  function stopRecordingMeter(recording) {
+  async function stopRecordingMeter(recording) {
     window.clearInterval(recordingTimer);
     recordingTimer = null;
     if (recording?.meterFrame) window.cancelAnimationFrame(recording.meterFrame);
-    recording?.audioContext?.close().catch(() => {});
+    recording?.audioSource?.disconnect();
+    recording?.analyser?.disconnect();
+    recording?.stream?.getTracks().forEach((track) => track.stop());
     elements.recordingMeter.hidden = true;
     elements.recordingMeterLevel.style.width = "0%";
+    // Do not expose playback while the meter is still releasing audio resources.
+    if (recording?.audioContext && recording.audioContext.state !== "closed") {
+      await recording.audioContext.close().catch((error) => {
+        // Microphone tracks are already stopped; preserve the recording on failure.
+        console.warn("Recording meter cleanup failed", error);
+      });
+    }
   }
 
   function startRecordingMeter(recording) {
@@ -586,7 +623,7 @@
       fileName: "",
       mimeType: blob.type || recording.mimeType || "application/octet-stream",
       size: blob.size,
-      duration: Math.max(0.1, (performance.now() - recording.startedAt) / 1000),
+      duration: Math.max(0.1, ((recording.stoppedAt || performance.now()) - recording.startedAt) / 1000),
       savedAt: new Date().toISOString(),
     };
     if (supportsPersistentFiles()) {
@@ -612,11 +649,13 @@
   }
 
   async function finishRecording(recording, blob) {
-    stopRecordingMeter(recording);
-    recording.stream.getTracks().forEach((track) => track.stop());
     elements.recordingStatus.textContent = "正在保存";
+    elements.recordButton.disabled = true;
     try {
+      await stopRecordingMeter(recording);
       await saveRecording(recording, blob);
+      const saved = episodeRecordings.get(recording.storageKey);
+      if (recordingForIndex(activeIndex) === saved) await prepareRecordingAudio(saved, blob);
       showToast("录音已保存在本机");
     } catch (error) {
       showToast(error.message || "录音保存失败");
@@ -630,6 +669,7 @@
   function stopCurrentRecording() {
     const recording = activeRecording;
     if (!recording || recording.recorder.state === "inactive") return;
+    recording.stoppedAt = performance.now();
     recording.recorder.stop();
   }
 
@@ -711,21 +751,26 @@
   }
 
   async function toggleRecordingPlayback() {
-    if (activeRecording) return;
+    if (activeRecording || recordingPlaybackPending) return;
     if (!elements.recordingAudio.paused) {
       elements.recordingAudio.pause();
       return;
     }
     const saved = recordingForIndex(activeIndex);
     if (!saved) return;
+    recordingPlaybackPending = true;
     try {
       setPlayback(false);
-      clearRecordingAudio();
-      recordingAudioUrl = URL.createObjectURL(await recordingBlob(saved));
-      elements.recordingAudio.src = recordingAudioUrl;
+      if (preparedRecording !== saved || !recordingAudioUrl) {
+        if (!await prepareRecordingAudio(saved)) return;
+      }
+      if (recordingForIndex(activeIndex) !== saved || activeRecording) return;
+      if (elements.recordingAudio.ended) elements.recordingAudio.currentTime = 0;
       await elements.recordingAudio.play();
     } catch (error) {
       showToast(error.message || "无法播放录音");
+    } finally {
+      recordingPlaybackPending = false;
     }
   }
 
