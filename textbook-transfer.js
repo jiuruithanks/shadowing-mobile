@@ -73,7 +73,13 @@ window.TextbookTransfer=(()=>{
       const db=await state.db;let imported=0,skipped=0;
       await new Promise((resolve,reject)=>{
         const tx=db.transaction("recordings","readwrite"),store=tx.objectStore("recordings");
-        for(const take of takes){const r=store.get(take.id);r.onsuccess=()=>{if(r.result)skipped++;else{store.add(take);imported++;}};}
+        for(const take of takes){const r=store.get(take.id);r.onsuccess=()=>{
+          const old=r.result;
+          const sameSentence=old?.exercise===take.exercise&&old?.sentence?.lessonId===take.sentence.lessonId&&old?.sentence?.index===take.sentence.index&&old?.sentence?.role===take.sentence.role;
+          if(!old){store.add(take);imported++;}
+          else if(sameSentence&&take.created>old.created){store.put(take);imported++;}
+          else skipped++;
+        };}
         tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
       });
       const conflicts=mergeStudy(payload.study,state.lessons);

@@ -908,11 +908,24 @@ async function startRecording() {
       try {
         const id=crypto.randomUUID();
         const take={id,exercise,sentence,created:Date.now(),blob};
-        await dbRequest("readwrite",store=>store.put(take));
+        if(window.TextbookOffline){
+          const db=await state.db;
+          await new Promise((resolve,reject)=>{
+            const tx=db.transaction("recordings","readwrite"),store=tx.objectStore("recordings");
+            const previous=store.index("exercise").getAll(exercise);
+            previous.onsuccess=()=>{
+              const matches=previous.result.filter(old=>old.sentence&&takeMatches(old,sentence)).sort((a,b)=>b.created-a.created);
+              if(matches.length)take.id=matches[0].id;
+              for(const old of matches)if(old.id!==take.id)store.delete(old.id);
+              store.put(take);
+            };
+            tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error("录音未保存"));
+          });
+        }else await dbRequest("readwrite",store=>store.put(take));
         indexRecording(take);updateRecordingProgress();
         await loadTakes(exercise);
-        if(state.item.id===exercise&&takeMatches({sentence})){$("takes").value=id;selectTake();}
-        notice(window.TextbookOffline?"录音已保存。可继续录制，新录音不会覆盖旧录音。":"第 "+(sentence.index+1)+" 句录音已保存，可查看跟读分析");
+        if(state.item.id===exercise&&takeMatches({sentence})){$("takes").value=take.id;selectTake();}
+        notice(window.TextbookOffline?"本句录音已保存，重录会替换。":"第 "+(sentence.index+1)+" 句录音已保存，可查看跟读分析");
       } catch {
         const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;
         a.download="未保存的录音."+(blob.type.includes("mp4")?"m4a":"webm");a.click();

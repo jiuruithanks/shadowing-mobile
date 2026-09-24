@@ -36,15 +36,26 @@ document.addEventListener("DOMContentLoaded",()=>{
   const recordings=sheet("本句录音"),row=document.querySelector(".recordings-row");
   const noticeNode=byId("notice");document.querySelector(".playback-panel").append(noticeNode);
   recordings.append(row);
-  const openRecordings=iconButton("headphones","本句录音");openRecordings.id="phoneRecordings";
-  const count=document.createElement("span");openRecordings.append(count);
+  const player=byId("recordedAudio"),playRecording=iconButton("play","播放我的录音");playRecording.id="phonePlayRecording";
+  const updatePlayback=()=>{
+    const text=player.paused?"播放我的录音":"暂停我的录音";
+    playRecording.replaceChildren();const symbol=document.createElement("i");symbol.dataset.lucide=player.paused?"play":"pause";
+    const label=document.createElement("span");label.textContent=text;playRecording.append(symbol,label);
+    playRecording.title=text;playRecording.setAttribute("aria-label",text);window.lucide?.createIcons();
+  };
+  playRecording.onclick=async()=>{
+    if(isRecording()){notice("请先停止录音。");return;}
+    try{if(player.paused)await player.play();else player.pause();}catch(error){notice("录音暂时无法播放："+error.message);}
+  };
+  for(const event of ["play","pause","ended","emptied"])player.addEventListener(event,updatePlayback);
+  document.querySelector(".playback-panel").append(playRecording);updatePlayback();
+  const openRecordings=iconButton("ellipsis","录音下载与删除");openRecordings.id="phoneRecordings";
   document.querySelector(".playback-panel").append(openRecordings);
   openRecordings.onclick=()=>recordings.showModal();
   recordings.addEventListener("close",()=>byId("recordedAudio").pause());
   const updateCount=()=>{
     const n=[...byId("takes").options].filter(o=>o.value).length;
-    count.textContent=`录音 ${n} 条`;openRecordings.title=`本句录音 ${n} 条`;
-    openRecordings.setAttribute("aria-label",`本句录音 ${n} 条`);
+    playRecording.disabled=!n;openRecordings.disabled=!n;
   };
   new MutationObserver(updateCount).observe(byId("takes"),{childList:true});updateCount();
   const updateNav=()=>{
