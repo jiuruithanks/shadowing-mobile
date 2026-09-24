@@ -4,7 +4,7 @@ window.TextbookTransfer=(()=>{
   let busy=false;
   window.addEventListener("beforeunload",event=>{if(busy){event.preventDefault();event.returnValue="";}});
   const checkIdle=()=>{if(isRecording())throw new Error("请先结束录音并保存。");if(busy)throw new Error("正在处理，请稍候。");};
-  const noteKeys=lesson=>lesson.items.flatMap(i=>["note:"+i.id,"answer:"+i.id,"done:"+i.id]);
+  const noteKeys=lesson=>lesson.items.flatMap(i=>["note:"+i.id,"answer:"+i.id,"done:"+i.id,...i.turns.map((_,n)=>"turnDone:"+i.id+":"+n)]);
   function snapshot(lessons){
     const keys=lessons.flatMap(noteKeys),values={};
     for(const key of keys){const value=read(key);if(value)values[key]=value;}
@@ -17,7 +17,7 @@ window.TextbookTransfer=(()=>{
       if(!allowed.has(key)||typeof value!=="string"||value.length>20000)continue;
       const current=read(key);
       if(!current||current===value){if(!save(key,value))throw new Error("笔记保存失败");continue;}
-      if(key.startsWith("done:"))continue;
+      if(key.startsWith("done:")||key.startsWith("turnDone:"))continue;
       const conflictKey="importedVariants:"+key;
       let variants;try{variants=JSON.parse(read(conflictKey,"[]"));}catch{variants=[];}
       if(!variants.some(v=>v.text===value))variants.push({text:value,created:Date.now()});

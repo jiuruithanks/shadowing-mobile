@@ -160,6 +160,93 @@ function availableTurns(item) {
   if(item.kind!=="自由回答")return itemTurns(item);
   const text=read("answer:"+item.id).trim();return text?[{role:"我",ja:text,zh:""}]:[];
 }
+const exerciseGroupCache=new WeakMap();
+function exerciseGroup(item=state.item) {
+  if(!item||!state.lesson)return null;
+  if(!exerciseGroupCache.has(state.lesson)) {
+    const buckets=new Map(),groups=new Map();
+    for(const candidate of state.lesson.items) {
+      const number=/^(.*?)\s*[·・]\s*(例\d*|\d+)$/.exec(candidate.number||"");
+      if(!number||candidate.kind==="自由回答"||itemTurns(candidate).length<2)continue;
+      const key=JSON.stringify([candidate.unit,candidate.book,candidate.page,candidate.title,number[1].trim()]);
+      if(!buckets.has(key))buckets.set(key,[]);
+      buckets.get(key).push(candidate);
+    }
+    for(const items of buckets.values()) {
+      if(items.length<2)continue;
+      const base=items[0],turns=itemTurns(base);
+      if(items.some(i=>i.turns.length!==turns.length||i.turns.some((t,n)=>t.role!==turns[n].role)))continue;
+      const different=turns.map((turn,n)=>items.some(i=>i.turns[n].ja!==turn.ja||i.turns[n].zh!==turn.zh)?n:-1).filter(n=>n>=0);
+      // Only merge a single replacement position, never merely similar dialogue titles.
+      if(different.length!==1)continue;
+      const group={items,variable:different[0],base,number:base.number.replace(/\s*[·・]\s*(例\d*|\d+)$/,"").trim()};
+      items.forEach(i=>groups.set(i.id,group));
+    }
+    exerciseGroupCache.set(state.lesson,groups);
+  }
+  return exerciseGroupCache.get(state.lesson).get(item.id)||null;
+}
+function sentenceSources(item,index) {
+  const group=exerciseGroup(item);
+  return group&&index!==group.variable?group.items:[item];
+}
+function sentenceTagSources(index) {
+  return sentenceSources(state.item,index).map(item=>TextbookTags.sentence(state.lesson,item,index,itemTurns(item)[index]));
+}
+function variantLabel(item) {return item.number.match(/[·・]\s*(例\d*|\d+)$/)?.[1]||item.number;}
+function sentenceDone(item,index) {
+  const sources=sentenceSources(item,index);
+  const explicit=read("turnDone:"+sources[0].id+":"+index);
+  return explicit?explicit==="1":sources.some(i=>read("done:"+i.id)==="1");
+}
+function setSentenceDone(item,index,value) {
+  return save("turnDone:"+sentenceSources(item,index)[0].id+":"+index,value?"1":"0");
+}
+function groupSentences(group) {
+  return group.base.turns.flatMap((_,index)=>index===group.variable?
+    group.items.map(item=>({item,index})):[{item:group.base,index}]);
+}
+function practiceDone(item) {
+  return exerciseGroup(item)?itemTurns(item).every((_,index)=>sentenceDone(item,index)):read("done:"+item.id)==="1";
+}
+function groupRecordingProgress(item) {
+  const group=exerciseGroup(item);if(!group)return recordingProgress(item);
+  const progress=new Map(group.items.map(i=>[i.id,recordingProgress(i)]));
+  const counts=groupSentences(group).map(s=>progress.get(s.item.id).counts[s.index]);
+  const known=[...progress.values()].every(p=>p.known),total=counts.length,recorded=counts.filter(Boolean).length;
+  return {known,total,recorded,counts,status:!known?"loading":recorded===total?"complete":recorded?"partial":"none",
+    label:known?`已录 ${recorded}/${total} 句 · ${Math.round(recorded/total*100)}%`:"正在读取录音…",
+    extras:[...new Set([...progress.values()].flatMap(p=>p.extras))]};
+}
+function refreshGroupControls() {
+  const group=exerciseGroup();if(!group||markedMode)return;
+  const sentences=groupSentences(group),done=sentences.filter(s=>sentenceDone(s.item,s.index)).length;
+  const summary=$("groupStudyProgress");if(summary)summary.textContent=`已练 ${done}/${sentences.length} 句`;
+  for(const b of document.querySelectorAll(".exercise-variants [data-variant]")) {
+    const item=group.items.find(i=>i.id===b.dataset.variant),recorded=recordingProgress(item).counts[group.variable]>0;
+    b.querySelector("small").textContent=recorded?"已录":sentenceDone(item,group.variable)?"已练":"";
+  }
+  for(const box of $("turnList").querySelectorAll(".sentence-done input"))box.checked=sentenceDone(state.item,Number(box.dataset.turn));
+  $("doneButton").setAttribute("aria-pressed",String(practiceDone(state.item)));
+}
+function renderVariantTabs(group) {
+  const bar=document.createElement("div");bar.className="exercise-variants";bar.setAttribute("role","tablist");bar.setAttribute("aria-label","切换替换句");
+  for(const item of group.items) {
+    const b=document.createElement("button");b.type="button";b.role="tab";b.dataset.variant=item.id;
+    b.setAttribute("aria-selected",String(item===state.item));b.setAttribute("aria-controls","variantSentence");
+    b.id="variant-"+item.id;b.tabIndex=item===state.item?0:-1;
+    b.append(document.createTextNode(variantLabel(item)),document.createElement("small"));
+    b.title=item.number+" · "+item.kind;b.onclick=()=>selectItem(item.id,group.variable);
+    b.onkeydown=event=>{
+      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+      event.preventDefault();const buttons=[...bar.children],index=buttons.indexOf(b);
+      const next=event.key==="Home"?0:event.key==="End"?buttons.length-1:(index+(event.key==="ArrowRight"?1:-1)+buttons.length)%buttons.length;
+      buttons[next].click();document.getElementById(buttons[next].id)?.focus();
+    };
+    bar.append(b);
+  }
+  return bar;
+}
 function recordingMetadata(take) {
   const s=take.sentence;
   return {id:take.id,exercise:take.exercise,created:take.created,hasAudio:take.blob instanceof Blob&&take.blob.size>0,
@@ -224,6 +311,13 @@ function recordingProgress(item) {
     if(index>=0)counts[index]++;
     else outdated++;
   }
+  const group=exerciseGroup(item);
+  if(group)for(let index=0;index<turns.length;index++) {
+    if(index===group.variable)continue;
+    for(const other of group.items)if(other!==item)for(const take of state.recordingIndex.get(other.id)?.values()||[]) {
+      if(recordingTurn(take,other)===index)counts[index]++;
+    }
+  }
   const recorded=counts.filter(n=>n>0).length,total=turns.length;
   const status=!known?state.recordingIndexStatus:!total?"empty":!recorded?"none":recorded===total?"complete":"partial";
   const label=!known?(status==="error"?"录音状态无法读取":"正在读取录音…"):
@@ -239,7 +333,7 @@ function updateRecordingProgress(refreshNav=true) {
   $("unmatchedCount").textContent=state.recordingIndexStatus==="ready"?String(unmatchedRecordings().length):"—";
   for(const el of $("exerciseNav").querySelectorAll(".exercise-recording")) {
     const item=state.lesson.items.find(i=>i.id===el.dataset.item);if(!item)continue;
-    const p=recordingProgress(item);
+    const p=groupRecordingProgress(item);
     el.dataset.status=p.status;
     el.firstElementChild.textContent=p.known?(p.total?`已录 ${p.recorded}/${p.total}`:"暂无句子"):"录音 —";
     el.lastElementChild.textContent=p.extras.length?"有未对应录音":"";
@@ -247,7 +341,7 @@ function updateRecordingProgress(refreshNav=true) {
     el.title=[p.label,...p.extras].join("；");el.setAttribute("aria-label",el.title);
   }
   if(!state.item)return;
-  const p=recordingProgress(state.item);
+  const p=markedMode?recordingProgress(state.item):groupRecordingProgress(state.item);
   $("recordingProgress").dataset.status=p.status;
   $("recordingProgressText").textContent=p.label;
   $("recordingProgressExtra").textContent=p.extras.join(" · ");
@@ -255,11 +349,12 @@ function updateRecordingProgress(refreshNav=true) {
   $("recordingProgressBar").hidden=!p.known||!p.total;
   $("recordingProgressBar").max=p.total||1;$("recordingProgressBar").value=p.recorded;
   for(const el of $("turnList").querySelectorAll(".turn-recording")) {
-    const count=p.counts[Number(el.dataset.turn)]||0;
+    const count=recordingProgress(state.item).counts[Number(el.dataset.turn)]||0;
     el.dataset.status=!p.known?"unknown":count?"complete":"none";
     el.textContent=!p.known?"录音状态未知":count?"已录音":"未录音";
     el.title=count?`本句已保存 ${count} 条录音`:el.textContent;
   }
+  refreshGroupControls();
 }
 function previewSample() {
   const draft=state.voiceDraft,role=draft?.role;
@@ -302,43 +397,52 @@ function activeTurn() {
   if(markedMode)MarkedPractice.updateControls();
 }
 function markDone() {
-  const key="done:"+state.item.id, done=read(key)!=="1";
+  const key="done:"+state.item.id, done=!practiceDone(state.item);
+  if(exerciseGroup())itemTurns().forEach((_,index)=>setSentenceDone(state.item,index,done));
   save(key,done?"1":"0"); $("doneButton").setAttribute("aria-pressed",String(done)); renderNav();
+  refreshGroupControls();
 }
 function renderNav() {
   if(markedMode){MarkedPractice.renderNav();return;}
   const query=$("search").value.trim().toLowerCase();
   const recorded=state.navMode==="recordings";
-  const available=state.lesson.items.filter(item=>(recorded?recordingProgress(item).recorded>0:item.unit===state.unit)&&(!query||
+  const matches=state.lesson.items.filter(item=>(recorded?recordingProgress(item).recorded>0:item.unit===state.unit)&&(!query||
     [item.title,item.prompt,item.book,item.page,item.number,...availableTurns(item).map(t=>t.ja)].join(" ").toLowerCase().includes(query)));
+  const seen=new Set(),available=matches.filter(item=>{
+    const id=exerciseGroup(item)?.base.id||item.id;if(seen.has(id))return false;seen.add(id);return true;
+  });
   if(!recorded) {
     const books=[...new Set(available.map(item=>item.book))];
     available.sort((a,b)=>books.indexOf(a.book)-books.indexOf(b.book));
   }
   $("recordingsTools").hidden=!recorded;
   $("itemCount").textContent=available.length+" 个练习";
-  $("doneCount").textContent=recorded?available.reduce((n,item)=>n+recordingProgress(item).counts.reduce((a,b)=>a+b,0),0)+" 条录音":
-    "已练 "+available.filter(i=>read("done:"+i.id)==="1").length;
+  $("doneCount").textContent=recorded?available.reduce((n,item)=>n+groupRecordingProgress(item).counts.reduce((a,b)=>a+b,0),0)+" 条录音":
+    "已练 "+available.filter(i=>(exerciseGroup(i)?.items||[i]).every(practiceDone)).length;
   $("exerciseNav").replaceChildren();
   let book="";
   for(const item of available) {
+      const group=exerciseGroup(item),selected=group?.items.includes(state.item);
       if(!recorded&&item.book!==book) {
         const heading=document.createElement("div");heading.className="nav-book";heading.textContent=item.book;
         $("exerciseNav").append(heading);book=item.book;
       }
       const button=document.createElement("button");
-      button.className="exercise-link"+(item.id===state.item?.id?" active":"")+(availableTurns(item).length?"":" pending");
+      button.className="exercise-link"+(item.id===state.item?.id||selected?" active":"")+(availableTurns(item).length?"":" pending");
       button.dataset.item=item.id;button.title=item.prompt;
       const label=document.createElement("span");label.className="exercise-label";
       const title=document.createElement("span");title.textContent=item.title;
-      const source=document.createElement("small");source.textContent=(recorded?item.book+" · ":"")+item.page+"页 · "+item.number;
+      const source=document.createElement("small");source.textContent=(recorded?item.book+" · ":"")+item.page+"页 · "+(group?group.number+" · "+group.items.length+" 个版本":item.number);
       label.append(title,source);button.append(label);
-      if(read("done:"+item.id)==="1") {
+      if((group?.items||[item]).every(practiceDone)) {
         const check=document.createElement("i"); check.dataset.lucide="check"; check.className="complete"; button.append(check);
       }
       const progress=document.createElement("span");progress.className="exercise-recording";progress.dataset.item=item.id;
       progress.append(document.createElement("span"),document.createElement("small"));button.append(progress);
-      button.addEventListener("click",()=>selectItem(item.id,recorded?recordingProgress(item).counts.findIndex(n=>n>0):undefined));
+      button.addEventListener("click",()=>{
+        const target=!query&&!recorded&&selected?state.item:item;
+        selectItem(target.id,recorded?recordingProgress(target).counts.findIndex(n=>n>0):undefined);
+      });
       $("exerciseNav").append(button);
   }
   if(!available.length) {
@@ -397,9 +501,12 @@ async function selectItem(id,preferredTurn) {
   $("sourceLabel").textContent="第"+state.lesson.number+"课 / "+item.unit+" / "+item.book+" "+item.page+"页 / "+item.number;
   $("exerciseTitle").textContent=item.title; $("kindLabel").textContent=item.kind;
   $("exercisePrompt").textContent=item.prompt; $("exerciseNote").textContent=item.note;
-  $("doneButton").setAttribute("aria-pressed",String(read("done:"+id)==="1"));
+  document.querySelector(".practice").classList.toggle("has-group",!markedMode&&Boolean(exerciseGroup(item)));
+  $("exercisePrompt").hidden=!markedMode&&Boolean(exerciseGroup(item))&&["按教材原例练习。","按题目和图片展开的参考答案。","按原页提示练习。"].includes(item.prompt);
+  $("doneButton").setAttribute("aria-pressed",String(practiceDone(item)));
   $("freeAnswer").hidden=item.kind!=="自由回答"; $("personalText").value=read("answer:"+id);
   $("noteText").value=read("note:"+id); $("noteStatus").textContent="";
+  document.querySelector('label[for="noteText"]').textContent=exerciseGroup(item)?variantLabel(item)+" · 练习笔记":"练习笔记";
   renderTurns(); renderRelated(); notice(""); await loadTakes(id);
 }
 function renderRelated() {
@@ -415,6 +522,10 @@ function renderRelated() {
 }
 function renderTurns() {
   const list=$("turnList"); list.replaceChildren(); const turns=itemTurns();
+  const group=markedMode?null:exerciseGroup();
+  if(group) {
+    const summary=document.createElement("div");summary.className="group-study-progress";summary.id="groupStudyProgress";list.append(summary);
+  }
   $("turnCount").textContent=turns.length?turns.length+" 段":"";
   $("play").disabled=!turns.length||!state.voices.length;
   $("previous").disabled=!turns.length; $("next").disabled=!turns.length;
@@ -426,9 +537,11 @@ function renderTurns() {
   }
   for(const [index,turn] of turns.entries()) {
     if(markedMode&&index!==state.turn)continue;
-    const row=document.createElement("div");row.className="tagged-turn";
+    const row=document.createElement("div");row.className="tagged-turn"+(group?" grouped-turn":"");
+    if(group&&index===group.variable){list.append(renderVariantTabs(group));row.classList.add("variant-sentence");row.id="variantSentence";row.setAttribute("role","tabpanel");row.setAttribute("aria-labelledby","variant-"+state.item.id);}
     const button=document.createElement("button"); button.className="turn"; button.dataset.turn=index; button.title="从这里播放";
     const role=document.createElement("span"); role.className="turn-role"; role.textContent=turn.role;
+    if(group&&index!==group.variable){const common=document.createElement("small");common.className="common-turn-label";common.textContent="共同句";role.append(common);}
     const content=document.createElement("span"); content.className="turn-content";
     const ja=document.createElement("span"); ja.className="turn-ja"; ja.lang="ja"; ja.textContent=turn.ja;
     const zh=document.createElement("span"); zh.className="turn-zh"; zh.textContent=turn.zh;
@@ -440,11 +553,27 @@ function renderTurns() {
     const tagButton=TextbookTags.iconButton("tag","标记第 "+(index+1)+" 句");tagButton.dataset.turn=index;
     tagButton.onclick=()=>{
       if(isRecording()){notice("请先结束录音，再编辑标记。");return;}
-      try{TextbookTags.openPicker(TextbookTags.sentence(state.lesson,state.item,index,turn));}
+      try{const sources=sentenceTagSources(index);TextbookTags.openPicker(sources[0],sources.slice(1));}
       catch(e){notice(e.message);}
     };
-    tools.append(tagButton);row.append(button,tools);list.append(row);
+    tools.append(tagButton);
+    if(group){
+      const label=document.createElement("label");label.className="sentence-done";
+      const check=document.createElement("input");check.type="checkbox";check.dataset.turn=index;check.checked=sentenceDone(state.item,index);
+      check.onchange=()=>{setSentenceDone(state.item,index,check.checked);renderNav();refreshGroupControls();};
+      label.append(check,document.createTextNode("已练"));tools.append(label);
+    }
+    row.append(button,tools);list.append(row);
     addRuby(ja,turn.ja);
+  }
+  if(group){
+    const nav=document.createElement("div");nav.className="variant-navigation";
+    const label=document.createElement("span"),index=group.items.indexOf(state.item);label.textContent=`${variantLabel(state.item)} · ${index+1}/${group.items.length}`;
+    const controls=document.createElement("div");
+    for(const [step,icon,title] of [[-1,"chevron-left","上一个版本"],[1,"chevron-right","下一个版本"]]) {
+      const b=TextbookTags.iconButton(icon,title);b.disabled=!group.items[index+step];b.onclick=()=>selectItem(group.items[index+step].id,group.variable);controls.append(b);
+    }
+    nav.append(label,controls);list.append(nav);
   }
   activeTurn(); applyDisplay();updateRecordingProgress();updateSentenceTags();icons();
   if(markedMode)MarkedPractice.updateControls();
@@ -456,7 +585,7 @@ function updateSentenceTags() {
     for(const row of $("turnList").querySelectorAll(".tagged-turn")) {
       const button=row.querySelector(".turn-tag-tools button"),index=Number(button.dataset.turn),turn=itemTurns()[index];
       if(!turn)continue;
-      const labels=TextbookTags.labels(TextbookTags.sentence(state.lesson,state.item,index,turn),data);
+      const sources=sentenceTagSources(index),labels=TextbookTags.labels(sources[0],data,sources.slice(1));
       TextbookTags.chips(row.querySelector(".turn-tags"),labels);
       button.setAttribute("aria-pressed",String(labels.length>0));
       button.title="标记第 "+(index+1)+" 句"+(labels.length?"："+labels.map(t=>t.name).join("、"):"");
@@ -538,6 +667,7 @@ $("loop").onclick=()=>{
 $("speed").onchange=()=>{applyPlaybackSpeed();save("speed",$("speed").value);};
 audio.addEventListener("ended",()=>{
   if(!state.playing)return;
+  if(exerciseGroup()&&!markedMode){setSentenceDone(state.item,state.turn,true);refreshGroupControls();}
   if(state.loop)playTurn(state.turn);
   else if(markedMode){state.playing=false;updatePlayButton();}
   else if(state.turn<itemTurns().length-1)playTurn(state.turn+1);
@@ -594,9 +724,14 @@ async function dbRequest(mode,action) {
 }
 async function loadTakes(id) {
   try {
-    const rows=await dbRequest("readonly",store=>store.index("exercise").getAll(id));
-    state.recordingIndex.set(id,new Map());rows.forEach(indexRecording);
-    state.recordingLoaded.add(id);updateRecordingProgress();
+    const item=state.lesson.items.find(i=>i.id===id),sources=exerciseGroup(item)?.items||[item];
+    const rows=[];
+    for(const source of sources) {
+      const loaded=await dbRequest("readonly",store=>store.index("exercise").getAll(source.id));
+      state.recordingIndex.set(source.id,new Map());loaded.forEach(indexRecording);
+      state.recordingLoaded.add(source.id);rows.push(...loaded);
+    }
+    updateRecordingProgress();
     if(state.item.id!==id)return;
     state.takes=rows.sort((a,b)=>b.created-a.created);renderTakes();
   } catch { if(state.item?.id===id)notice("无法读取本地录音存储，请检查浏览器存储权限。"); }
@@ -604,12 +739,14 @@ async function loadTakes(id) {
 function currentSentence() {
   const turn=itemTurns()[state.turn];if(!turn)return null;
   const settings=assignedSettings(turn);
-  return {lessonId:state.lesson.id,index:state.turn,role:turn.role,text:turn.ja,
+  return {lessonId:state.lesson.id,exerciseId:state.item.id,index:state.turn,role:turn.role,text:turn.ja,
     settings:settings?{...settings}:null};
 }
 function takeMatches(take,sentence=currentSentence()) {
-  return !take.sentence||Boolean(sentence&&take.sentence.lessonId===sentence.lessonId&&
-    take.sentence.index===sentence.index&&take.sentence.role===sentence.role);
+  if(!take.sentence)return take.exercise===state.item?.id;
+  if(!sentence||take.sentence.lessonId!==sentence.lessonId||take.sentence.index!==sentence.index||take.sentence.role!==sentence.role)return false;
+  const item=state.lesson.items.find(i=>i.id===(sentence.exerciseId||state.item?.id));
+  return !take.exercise||take.exercise===item?.id||Boolean(item&&take.sentence.text===sentence.text&&sentenceSources(item,sentence.index).some(i=>i.id===take.exercise));
 }
 function selectedTake() {return state.takes.find(t=>t.id===$("takes").value&&takeMatches(t));}
 function renderTakes() {
@@ -651,11 +788,11 @@ $("downloadRecording").onclick=()=>{
 };
 $("deleteRecording").onclick=async()=>{
   const id=$("takes").value;if(!id||!confirm("删除选中的这一条录音？"))return;
-  const exercise=state.item.id;
+  const exercise=selectedTake()?.exercise,viewId=state.item.id;
   try{
     await dbRequest("readwrite",store=>store.delete(id));
     state.recordingIndex.get(exercise)?.delete(id);updateRecordingProgress();
-    await loadTakes(exercise);notice("录音已删除");
+    await loadTakes(viewId);notice("录音已删除");
   }
   catch{notice("删除失败，录音仍保留。");}
 };
@@ -886,7 +1023,7 @@ async function startRecording() {
   const sentence=currentSentence();if(!sentence){notice("请先选择可跟读的句子。");return;}
   if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){notice("当前浏览器不支持录音，请用本机浏览器打开。");return;}
   cancelPlayback();$("recordedAudio").pause();state.recordingPending=true;$("record").disabled=true;updateAnalysisEntry();
-  const exercise=state.item.id;
+  const viewId=state.item.id,sources=sentenceSources(state.item,state.turn),exercise=sources[0].id;
   let desktopTicket;
   try {
     desktopTicket=await window.desktopSession?.begin();
@@ -912,19 +1049,24 @@ async function startRecording() {
           const db=await state.db;
           await new Promise((resolve,reject)=>{
             const tx=db.transaction("recordings","readwrite"),store=tx.objectStore("recordings");
-            const previous=store.index("exercise").getAll(exercise);
-            previous.onsuccess=()=>{
-              const matches=previous.result.filter(old=>old.sentence&&takeMatches(old,sentence)).sort((a,b)=>b.created-a.created);
-              if(matches.length)take.id=matches[0].id;
-              for(const old of matches)if(old.id!==take.id)store.delete(old.id);
-              store.put(take);
-            };
+            let remaining=sources.length;const previous=[];
+            for(const source of sources) {
+              const request=store.index("exercise").getAll(source.id);
+              request.onsuccess=()=>{
+                previous.push(...request.result);if(--remaining)return;
+                const matches=previous.filter(old=>old.sentence&&takeMatches(old,sentence)).sort((a,b)=>b.created-a.created);
+                // Keep the original identity so desktop round-trip sync replaces the same take.
+                if(matches.length){take.id=matches[0].id;take.exercise=matches[0].exercise;}
+                for(const old of matches)if(old.id!==take.id)store.delete(old.id);
+                store.put(take);
+              };
+            }
             tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error("录音未保存"));
           });
         }else await dbRequest("readwrite",store=>store.put(take));
         indexRecording(take);updateRecordingProgress();
-        await loadTakes(exercise);
-        if(state.item.id===exercise&&takeMatches({sentence})){$("takes").value=take.id;selectTake();}
+        await loadTakes(viewId);
+        if(state.item.id===viewId&&takeMatches({sentence})){$("takes").value=take.id;selectTake();}
         notice(window.TextbookOffline?"本句录音已保存，重录会替换。":"第 "+(sentence.index+1)+" 句录音已保存，可查看跟读分析");
       } catch {
         const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;
@@ -1306,20 +1448,20 @@ async function init() {
   }).observe(document.querySelector(".playback-panel"));
   try {
     const getCourse=window.TextbookOffline?TextbookOffline.fetch:fetch;
-    const catalogResponse=await getCourse("textbook-lessons.json?v=lessons-1-10-1");
+    const catalogResponse=await getCourse("textbook-lessons.json?v=lessons-1-15-1");
     if(!catalogResponse.ok)throw new Error("课程目录加载失败，请刷新重试。");
     state.catalog=(await catalogResponse.json()).lessons;
     if(!state.catalog.length){location.replace("mobile-textbook-library.html");return;}
     const {entry,hash}=routeLesson(state.catalog);
     $("lessonSelect").replaceChildren(...state.catalog.map(l=>new Option("第 "+l.number+" 课 · "+l.title,String(l.number))));
     $("lessonSelect").value=String(entry.number);
-    const response=await getCourse(entry.file+"?v=lessons-1-10-1");if(!response.ok)throw new Error("第"+entry.number+"课内容加载失败");
+    const response=await getCourse(entry.file+"?v=lessons-1-15-1");if(!response.ok)throw new Error("第"+entry.number+"课内容加载失败");
     const lesson=await response.json();
     if(lesson.id!==entry.id||!Array.isArray(lesson.items)||!lesson.items.length)throw new Error("课程内容不完整，请刷新重试。");
     state.lesson=lesson;
     state.lessons=await Promise.all(state.catalog.map(async entry=>{
       if(entry.id===lesson.id)return lesson;
-      const r=await getCourse(entry.file+"?v=lessons-1-10-1");
+      const r=await getCourse(entry.file+"?v=lessons-1-15-1");
       if(!r.ok)throw new Error("配音角色目录加载失败，请刷新重试。");
       const other=await r.json();
       if(other.id!==entry.id||!Array.isArray(other.items))throw new Error("课程角色资料不完整，请刷新重试。");

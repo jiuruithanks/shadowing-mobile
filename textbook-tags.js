@@ -59,15 +59,17 @@ window.TextbookTags=(()=>{
       exerciseId:item.id,exerciseTitle:item.title,book:item.book,page:item.page,number:item.number,
       index,role:turn.role,text:turn.ja,translation:turn.zh||""};
   }
-  function assign(sentence,ids) {
+  function assign(sentence,ids,aliases=[]) {
     update(data=>{
       const tagIds=[...new Set(ids)].filter(id=>data.tags.some(t=>t.id===id));
-      data.sentences=data.sentences.filter(s=>s.key!==sentence.key);
+      const keys=new Set([sentence.key,...aliases.map(s=>s.key)]);
+      data.sentences=data.sentences.filter(s=>!keys.has(s.key));
       if(tagIds.length)data.sentences.push({...sentence,tagIds,updated:Date.now()});
     });
   }
-  function labels(sentence,data=read()) {
-    const ids=data.sentences.find(s=>s.key===sentence.key)?.tagIds||[];
+  function labels(sentence,data=read(),aliases=[]) {
+    const keys=new Set([sentence.key,...aliases.map(s=>s.key)]);
+    const ids=data.sentences.filter(s=>keys.has(s.key)).flatMap(s=>s.tagIds);
     return data.tags.filter(t=>ids.includes(t.id));
   }
   function subscribe(callback) {
@@ -88,7 +90,7 @@ window.TextbookTags=(()=>{
   }
   function refreshIcons() {window.lucide?.createIcons();}
 
-  let dialog,pickerSentence,draft=new Set();
+  let dialog,pickerSentence,pickerAliases=[],draft=new Set();
   function buildPicker() {
     dialog=element("dialog","tag-picker");dialog.id="sentenceTagDialog";
     dialog.setAttribute("aria-labelledby","sentenceTagTitle");
@@ -111,7 +113,7 @@ window.TextbookTags=(()=>{
     const manage=element("a","","管理标记");manage.href=(window.TextbookOffline?"mobile-textbook-tags-manage.html":"textbook-tags-manage.html")+"?view=manage";
     const apply=element("button","text-button","保存标记");apply.type="button";apply.id="saveSentenceTags";
     apply.onclick=()=>{
-      try {assign(pickerSentence,[...draft]);dialog.close();}
+      try {assign(pickerSentence,[...draft],pickerAliases);dialog.close();}
       catch(e){status.textContent=e.message;}
     };
     actions.append(manage,apply);dialog.append(toolbar,body,actions);document.body.append(dialog);
@@ -126,9 +128,9 @@ window.TextbookTags=(()=>{
       label.append(input,element("span","",tag.name));options.append(label);
     }
   }
-  function openPicker(sentence) {
+  function openPicker(sentence,aliases=[]) {
     const data=read();if(!dialog)buildPicker();
-    pickerSentence=sentence;draft=new Set(labels(sentence,data).map(t=>t.id));
+    pickerSentence=sentence;pickerAliases=aliases;draft=new Set(labels(sentence,data,aliases).map(t=>t.id));
     dialog.querySelector("#tagSentence").textContent=sentence.text;
     dialog.querySelector("#quickTagName").value="";dialog.querySelector("#tagPickerStatus").textContent="";
     renderOptions();refreshIcons();dialog.showModal();
