@@ -46,14 +46,16 @@ window.TextbookTransfer=(()=>{
   }
   async function exportPractice(){
     checkIdle();if(!state.lesson)throw new Error("请先选择一课。");busy=true;try{
+      const lessons=window.TextbookOffline?state.lessons:[state.lesson];
+      const lessonIds=new Set(lessons.map(l=>l.id));
       const rows=await dbRequest("readonly",s=>s.getAll()),files=new Map(),takes=[];
       for(const take of rows){
-        if(!(take.blob instanceof Blob)||take.sentence?.lessonId!==state.lesson?.id)continue;
+        if(!(take.blob instanceof Blob)||!take.sentence||(!window.TextbookOffline&&!lessonIds.has(take.sentence.lessonId)))continue;
         const path="recordings/"+takes.length;files.set(path,take.blob);
         takes.push({id:take.id,exercise:take.exercise,sentence:take.sentence,created:take.created,path});
       }
       notice("正在打包录音和练习记录…");
-      const blob=await TextbookPackage.pack(TextbookPackage.RETURN,{takes,study:snapshot([state.lesson])},files);
+      const blob=await TextbookPackage.pack(TextbookPackage.RETURN,{takes,study:snapshot(lessons)},files);
       TextbookPackage.download(blob,"教材练习-"+new Date().toISOString().slice(0,10)+".textbook-practice");notice("练习记录包已导出。");
     }finally{busy=false;}
   }
@@ -77,11 +79,11 @@ window.TextbookTransfer=(()=>{
       const conflicts=mergeStudy(payload.study,state.lessons);
       await loadRecordingIndex();if(state.item)await loadTakes(state.item.id);renderNav();renderTurns();
       if(state.item)$("noteText").value=read("note:"+state.item.id);
-      notice(`已导入 ${imported} 条录音，跳过 ${skipped} 条重复录音；${conflicts} 项文字冲突保留在“导入的文字版本”。`);
+      notice(`已导入 ${imported} 条录音，跳过 ${skipped} 条重复录音；${conflicts} 项不同内容保留在“同步时保留的笔记与回答”。`);
     }finally{busy=false;}
   }
   function variantsDialog(){
-    const dialog=el("dialog"),title=el("h2","导入的文字版本"),close=el("button","关闭");close.onclick=()=>dialog.close();dialog.append(title,close);
+    const dialog=el("dialog"),title=el("h2","同步时保留的笔记与回答"),close=el("button","关闭");dialog.className="transfer-dialog";close.onclick=()=>dialog.close();dialog.append(title,close);
     let count=0;
     for(const lesson of state.lessons)for(const key of noteKeys(lesson)){
       let variants;try{variants=JSON.parse(read("importedVariants:"+key,"[]"));}catch{continue;}
@@ -155,10 +157,10 @@ window.TextbookTransfer=(()=>{
     const nav=document.querySelector(".app-header nav"),select=el("select"),input=el("input");
     select.setAttribute("aria-label","教材文件操作");select.append(new Option("文件",""));
     if(!window.TextbookOffline)select.append(new Option("导出手机教材包","course"),new Option("导入手机练习记录","import"));
-    select.append(new Option("导出本课练习记录","export"),new Option("导入的文字版本","variants"));
+    select.append(new Option(window.TextbookOffline?"导出全部练习到电脑":"导出本课练习记录","export"),new Option("同步时保留的笔记与回答","variants"));
     input.type="file";input.hidden=true;input.onchange=()=>{if(input.files[0])importPractice(input.files[0]).catch(e=>notice(e.message));input.value="";};
     select.onchange=()=>{const action=select.value;select.value="";try{checkIdle();if(action==="course")exportCourse().catch(e=>notice(e.message));if(action==="export")exportPractice().catch(e=>notice(e.message));if(action==="import")input.click();if(action==="variants")variantsDialog();}catch(e){notice(e.message);}};
     nav.append(select,input);
   });
-  return {exportCourse,exportPractice,importPractice,mergeStudy};
+  return {exportCourse,exportPractice,importPractice,mergeStudy,variantsDialog};
 })();

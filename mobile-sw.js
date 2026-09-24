@@ -1,6 +1,7 @@
-const CACHE_NAME = "tokyo-shadowing-mobile-v20-import-storage";
+const CACHE_NAME = "tokyo-shadowing-mobile-v21-phone-practice";
 const BASE_URL = new URL("./", self.location.href);
 const APP_SHELL_PATHS = [
+  "textbook-phone-ui.js?v=1",
   "mobile.html",
   "mobile.css?v=20260916-02",
   "mobile-package.js?v=20260915-02",

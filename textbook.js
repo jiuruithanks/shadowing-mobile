@@ -620,7 +620,7 @@ function renderTakes() {
     for(const take of [...bound,...legacy]) {
       const option=document.createElement("option");option.value=take.id;
       const label=!take.sentence?"旧录音 · ":take.sentence.text!==currentSentence()?.text?"旧文本 · ":"";
-      option.textContent=label+new Date(take.created).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
+      option.textContent=(window.TextbookOffline?`第 ${rows.length-rows.indexOf(take)} 次 · `:"")+label+new Date(take.created).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
       $("takes").append(option);
     }
     if(rows.some(t=>t.id===selected))$("takes").value=selected;
@@ -912,7 +912,7 @@ async function startRecording() {
         indexRecording(take);updateRecordingProgress();
         await loadTakes(exercise);
         if(state.item.id===exercise&&takeMatches({sentence})){$("takes").value=id;selectTake();}
-        notice("第 "+(sentence.index+1)+" 句录音已保存，可查看跟读分析");
+        notice(window.TextbookOffline?"录音已保存。可继续录制，新录音不会覆盖旧录音。":"第 "+(sentence.index+1)+" 句录音已保存，可查看跟读分析");
       } catch {
         const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;
         a.download="未保存的录音."+(blob.type.includes("mp4")?"m4a":"webm");a.click();

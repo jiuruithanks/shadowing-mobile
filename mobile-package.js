@@ -46,7 +46,7 @@
     return new DataView(await blob.arrayBuffer());
   }
 
-  async function findCentralDirectory(file) {
+  async function findCentralDirectory(file, maxEntries = 1000) {
     if (!file || !Number.isFinite(file.size) || file.size < 22) {
       throw new PackageError("项目包为空或不完整");
     }
@@ -87,7 +87,7 @@
       directorySize = readUint64(zip64, 40);
       directoryOffset = readUint64(zip64, 48);
     }
-    if (entryCount < 1 || entryCount > 1000) throw new PackageError("项目包文件数量异常");
+    if (entryCount < 1 || entryCount > maxEntries) throw new PackageError("项目包文件数量异常");
     if (directoryOffset + directorySize > file.size) throw new PackageError("项目包目录超出文件范围");
     return { entryCount, directoryOffset, directorySize };
   }
@@ -119,8 +119,8 @@
     }
   }
 
-  async function readEntries(file) {
-    const directory = await findCentralDirectory(file);
+  async function readEntries(file, maxEntries = 1000) {
+    const directory = await findCentralDirectory(file, Math.min(10001, maxEntries));
     const buffer = await file.slice(
       directory.directoryOffset,
       directory.directoryOffset + directory.directorySize,

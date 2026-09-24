@@ -12,7 +12,7 @@ window.TextbookPackage=(()=>{
     });
   }
   async function pack(format,payload,files,progress=()=>{}) {
-    check(files.size<1000,"文件超过 999 个，请减少所选练习或分课导出。");
+    check(files.size<=(format===RETURN?10000:999),"包内文件数量超过上限。");
     const entries=[],descriptors=[];
     for(const [path,blob] of files){
       check(blob instanceof Blob&&blob.size>0,"文件为空："+path);
@@ -24,11 +24,11 @@ window.TextbookPackage=(()=>{
   }
   async function unpack(file,format,progress=()=>{}) {
     check(file.size<2*1024**3,"包超过 2 GB，请分练习导出。");
-    const entries=await ShadowingPackage.readEntries(file),manifest=entries.get("manifest.json");
+    const entries=await ShadowingPackage.readEntries(file,format===RETURN?10001:1000),manifest=entries.get("manifest.json");
     check(manifest&&manifest.uncompressedSize<16*1024**2,"缺少或无效的包清单");
     const data=JSON.parse(await (await ShadowingPackage.entryBlob(file,manifest)).text());
     check(data.format===format&&data.version===VERSION,"包类型或版本不支持");
-    check(Array.isArray(data.files)&&data.files.length<1000,"文件数量无效");
+    check(Array.isArray(data.files)&&data.files.length<=(format===RETURN?10000:999),"文件数量无效");
     const files=new Map();
     for(const descriptor of data.files){
       check(typeof descriptor.path==="string"&&!files.has(descriptor.path),"重复的文件路径");

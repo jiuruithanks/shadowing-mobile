@@ -1,3 +1,67 @@
 .transfer-dialog{width:680px;max-width:calc(100vw - 32px);padding:24px}.transfer-dialog label{display:block;margin:10px 0}.export-exercises{max-height:45vh;overflow:auto;margin:18px 0;border-block:1px solid #cbd5d0}.transfer-dialog button{margin-right:12px;padding:8px 12px}.app-header select{max-width:180px}.library-main{max-width:960px;margin:0 auto;padding:24px}.library-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.library-heading h1{font-size:24px}.library-main section{padding:20px 0;border-bottom:1px solid #ccd5d0}.library-main h2{font-size:20px}.library-main details{margin-top:8px}.library-main summary{cursor:pointer}.library-main a{color:#176f59}.offline-textbook #freeAnswer,.offline-textbook #voiceSettings,.offline-textbook #voiceSummary,.offline-textbook #analyzeRecording{display:none!important}.offline-textbook .app-header{flex-wrap:wrap}.offline-textbook .app-header nav{display:flex;gap:10px;align-items:center}.offline-textbook .playback-panel{padding-bottom:max(12px,env(safe-area-inset-bottom))}.offline-textbook .turn{overflow-wrap:anywhere}.offline-textbook .transport{flex-wrap:wrap}.offline-textbook .recordings-row{flex-wrap:wrap}.offline-textbook .recordings-row audio{max-width:100%;width:260px}.offline-textbook .app-header .brand{white-space:nowrap}
 @media(max-width:700px){.offline-textbook .app-header{padding:8px 12px;gap:8px}.offline-textbook .app-header nav{font-size:13px}.offline-textbook .app-header select{max-width:115px}.offline-textbook .playback-progress{flex-basis:100%;min-width:0}.offline-textbook .transport{gap:6px}.offline-textbook .recordings-row{gap:6px}.offline-textbook .recordings-row audio{height:34px;width:190px}.offline-textbook .playback-panel{padding-inline:10px}.offline-textbook .practice{padding-inline:14px}.library-main{padding:16px}.library-heading{flex-wrap:wrap}}
 @media(orientation:landscape) and (max-height:550px){.offline-textbook .playback-panel{max-height:45dvh;overflow:auto}.offline-textbook .playback-progress{flex-basis:auto}.offline-textbook .app-header{min-height:42px}}
+
+/* Offline practice uses a compact transport and separate recording sheet. */
+.offline-textbook .app-header{position:sticky;top:0;z-index:30;height:auto;min-height:56px;flex-wrap:nowrap;padding:8px 16px;gap:10px}
+.offline-textbook .app-header nav,.offline-textbook #engineStatus{display:none}
+.offline-textbook .brand{margin-right:auto;font-size:18px;min-width:0}
+.offline-textbook .icon-button{width:44px;height:44px;min-width:44px}
+.offline-textbook #phoneMenu{flex:none}
+.offline-textbook .playback-panel{padding:8px 14px max(8px,env(safe-area-inset-bottom));display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px}
+.offline-textbook .transport{grid-column:1/-1;display:grid;grid-template-columns:44px 52px 44px 44px minmax(64px,1fr) 52px;gap:6px;min-width:0}
+.offline-textbook .playback-progress{grid-row:1;grid-column:1/-1;padding:0;min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px}
+.offline-textbook .playback-progress #currentLabel{grid-column:1;max-width:none;font-size:12px}
+.offline-textbook #audioTime{grid-column:2;grid-row:1}
+.offline-textbook #seek{grid-column:1/-1;grid-row:2;margin:0;height:20px}
+.offline-textbook #previous,.offline-textbook #play,.offline-textbook #next,.offline-textbook #loop,.offline-textbook .select-label,.offline-textbook .recording-controls{grid-row:2}
+.offline-textbook #play{width:52px}
+.offline-textbook .select-label{font-size:0;justify-self:stretch}
+.offline-textbook #speed{width:100%;max-width:none;height:44px;font-size:15px;padding:6px}
+.offline-textbook .recording-controls{display:contents}
+.offline-textbook #record{grid-row:2;grid-column:6;width:52px;color:#a4313a;border-color:#d8b3b7}
+.offline-textbook #record.is-recording{color:#fff}
+.offline-textbook #recordMeter{grid-row:3;grid-column:1/-1;width:100%;display:flex;align-items:center;gap:10px;min-height:18px}
+.offline-textbook .record-meter-track{flex:1;height:5px}
+.offline-textbook .record-meter-caption{margin:0;gap:12px;font-size:11px;min-width:100px}
+.offline-textbook #phoneRecordings{grid-column:2;grid-row:2;width:auto;font-size:13px;gap:6px;height:36px;min-height:36px;padding:0 10px}
+.offline-textbook #notice{grid-column:1;grid-row:2;max-width:none;width:auto;text-align:left;align-self:center;font-size:12px;line-height:1.4;max-height:36px;overflow:auto}
+.phone-sheet{width:560px;max-width:calc(100vw - 20px);max-height:85dvh;padding:0;border-radius:8px;overflow:auto}
+.phone-sheet>a,.phone-sheet>button{display:block;text-align:left;width:calc(100% - 32px);margin:8px 16px;padding:14px 10px;border:0;border-bottom:1px solid var(--line);background:white;color:var(--green);font-size:16px;min-height:48px}
+.phone-sheet>p{padding:0 24px;font-size:14px;line-height:1.6}
+.phone-sheet [hidden]{display:none!important}
+.offline-textbook .phone-sheet .recordings-row{display:grid;grid-template-columns:minmax(0,1fr) 44px 44px;margin:0;padding:16px;gap:12px}
+.offline-textbook .phone-sheet .recordings-row>span{grid-column:1/-1;font-size:14px}
+.offline-textbook .phone-sheet #takes{grid-column:1/-1;width:100%;max-width:none;height:46px;font-size:16px}
+.offline-textbook .phone-sheet #recordedAudio{grid-column:1/-1;width:100%;max-width:none;min-width:0;height:54px}
+.offline-textbook .phone-sheet #downloadRecording{grid-column:2}
+.offline-textbook .phone-sheet #deleteRecording{grid-column:3;color:#a4313a}
+.offline-textbook textarea,.offline-textbook .search input,.offline-textbook #lessonSelect{font-size:16px}
+@media(max-width:900px){
+  .offline-textbook .workspace{display:block;height:auto;min-height:0;padding-bottom:calc(var(--panel-height) + 16px)}
+  .offline-textbook .sidebar{display:none}
+  .offline-textbook .mobile-nav-toggle{display:inline-flex}
+  .offline-textbook.nav-open .sidebar{display:block;position:fixed;top:var(--phone-header,60px);bottom:0;left:0;width:100%;max-height:none;z-index:25;box-shadow:none;padding:16px 18px max(24px,env(safe-area-inset-bottom));overscroll-behavior:contain}
+  .offline-textbook.nav-open .playback-panel{visibility:hidden;pointer-events:none}
+  .offline-textbook.nav-open .practice{visibility:hidden}
+  .offline-textbook .practice{padding:16px 14px;overflow:visible}
+  .offline-textbook .exercise-heading{align-items:flex-start;gap:8px}
+  .offline-textbook .exercise-heading h2{font-size:20px}
+  .offline-textbook .heading-actions{gap:4px}
+  .offline-textbook .prompt-band{margin-top:12px;padding:10px 0}
+  .offline-textbook .view-tools{padding:12px 0;gap:10px}
+  .offline-textbook .turn{grid-template-columns:28px minmax(0,1fr) 22px;gap:8px;padding:14px 6px}
+  .offline-textbook .turn-ja{font-size:20px}
+  .offline-textbook .turn-zh{font-size:14px}
+  .offline-textbook .unit-tabs{gap:4px;flex-wrap:wrap}
+  .offline-textbook .unit-tabs button{min-height:44px;font-size:13px}
+  .offline-textbook .exercise-link{min-height:60px;font-size:14px}
+  .phone-sheet{margin:auto 0 0;width:100%;max-width:100%;border-radius:8px 8px 0 0;padding-bottom:max(12px,env(safe-area-inset-bottom))}
+}
+@media(orientation:landscape) and (max-height:550px){
+  .offline-textbook .playback-panel{max-height:none;padding-top:4px;padding-bottom:4px}
+  .offline-textbook .transport{grid-template-columns:44px 52px 44px 44px 72px 52px minmax(120px,1fr)}
+  .offline-textbook .playback-progress{grid-column:7;grid-row:2;padding-left:8px}
+  .offline-textbook #recordMeter{grid-column:1/5;grid-row:3}
+  .offline-textbook .app-header{min-height:48px;padding-block:2px}
+}
