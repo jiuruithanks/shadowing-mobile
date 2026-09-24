@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>管理标记 · 教材跟读</title>
+  <link rel="icon" href="favicon.svg">
+  <link rel="stylesheet" href="textbook.css?v=shared-voices-1">
+  <link rel="stylesheet" href="textbook-tags.css?v=2">
+  <script defer src="textbook-assets/lucide.js"></script>
+  <script defer src="mobile-package.js?v=20260924-01"></script>
+  <script defer src="textbook-package.js?v=1"></script>
+  <script defer src="textbook-offline.js?v=1"></script>
+  
+  <script defer src="textbook-tags.js?v=mobile-1"></script>
+  <script defer src="textbook-marks.js?v=mobile-1"></script>
+<link rel="manifest" href="manifest.webmanifest">
+</head>
+<body data-practice="manage">
+  <header class="app-header marks-header">
+    <a class="brand" href="mobile-textbook.html"><i data-lucide="book-open"></i><span>教材跟读</span></a>
+    <nav aria-label="教材页面"><a id="courseReturn" href="mobile-textbook.html">课程练习</a><a href="mobile-textbook-marks.html" aria-current="page">标记练习</a></nav>
+  </header>
+  <main class="marks-main">
+    <div class="marks-heading"><h1 id="marksTitle">标记练习</h1><span id="markedTotal" class="muted"></span></div>
+    <nav class="marks-tabs" aria-label="标记页面"><a id="marksTab" href="mobile-textbook-marks.html" aria-current="page">标记练习</a><a id="manageTagsTab" href="mobile-textbook-tags-manage.html?view=manage">管理标记</a></nav>
+    <p id="marksStatus" class="tag-status" role="status" aria-live="polite"></p>
+    <section id="markedLibrary" aria-label="已标记的句子">
+      <div class="marks-filters">
+        <select id="markedCourseFilter" aria-label="按课程筛选"><option value="">全部课程</option></select>
+        <select id="markedTagFilter" aria-label="按标记筛选"><option value="">全部标记</option></select>
+        <label class="search"><i data-lucide="search"></i><input id="markedSearch" type="search" aria-label="查找标记句子" placeholder="查找句子、角色、练习"></label>
+      </div>
+      <p id="markedCount" class="marks-count" role="status"></p>
+      <div id="markedCourses"></div>
+    </section>
+    <section id="tagManagement" class="manage-tags" aria-label="自定义标记" hidden>
+      <form id="createTagForm" class="tag-create"><input id="newTagName" aria-label="新标记名称" placeholder="新标记名称" required maxlength="40"><button class="icon-button" type="submit" title="创建标记" aria-label="创建标记"><i data-lucide="plus"></i></button></form>
+      <div id="managedTags"></div>
+    </section>
+  </main>
+</body>
+</html>

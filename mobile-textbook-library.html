@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>手机教材库</title><link rel="icon" href="favicon.svg"><link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="textbook.css?v=shared-voices-1"><link rel="stylesheet" href="textbook-mobile.css?v=1">
+<script defer src="textbook-assets/lucide.js"></script><script defer src="mobile-package.js?v=20260924-01"></script>
+<script defer src="textbook-package.js?v=1"></script><script defer src="mobile-textbook-library.js?v=1"></script>
+</head>
+<body class="textbook-library">
+<header class="app-header"><a class="brand" href="mobile-textbook-library.html"><i data-lucide="book-open"></i>教材跟读</a><nav><a href="mobile.html">视频跟读</a><a href="mobile-textbook-marks.html">标记练习</a></nav></header>
+<main class="library-main"><div class="library-heading"><h1>我的教材</h1><button id="importCourse" class="text-button"><i data-lucide="file-up"></i>导入课程包</button><input id="courseFile" type="file" hidden></div>
+<p id="libraryStatus" role="status"></p><p id="offlineStatus" role="status"></p><div id="courseLibrary"></div></main>
+</body></html>

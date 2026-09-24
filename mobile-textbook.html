@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>教材跟读</title>
+  <link rel="icon" href="favicon.svg">
+  <link rel="stylesheet" href="textbook.css?v=shared-voices-1">
+  <link rel="stylesheet" href="textbook-tags.css?v=2">
+  <script defer src="textbook-assets/lucide.js"></script>
+  <script defer src="mobile-package.js?v=20260924-01"></script>
+  <script defer src="textbook-package.js?v=1"></script>
+  <script defer src="textbook-offline.js?v=1"></script>
+  
+  <script defer src="textbook-tags.js?v=mobile-1"></script>
+  <script defer src="textbook.js?v=mobile-1"></script>
+  <link rel="stylesheet" href="textbook-mobile.css?v=1">
+  <script defer src="textbook-transfer.js?v=1"></script>
+<link rel="manifest" href="manifest.webmanifest">
+</head>
+<body class="offline-textbook">
+  <header class="app-header">
+    <a class="brand" href="mobile-textbook.html"><i data-lucide="book-open"></i><span>教材跟读</span></a>
+    <button id="navToggle" class="icon-button mobile-nav-toggle" aria-label="练习目录" title="练习目录" aria-expanded="false"><i data-lucide="list"></i></button>
+    <nav aria-label="其他页面"><a href="mobile-textbook-library.html">教材库</a><a href="mobile.html">视频</a></nav>
+    <button id="engineStatus" class="status-button">连接本地配音…</button>
+  </header>
+  <main class="workspace">
+    <aside class="sidebar">
+      <div class="book-heading"><span class="eyebrow">できる日本語 · 初中級 第2版</span><nav class="course-level-nav" aria-label="教材页面"><a href="mobile-textbook.html" aria-current="page">课程练习</a><a id="markedPracticeLink" href="mobile-textbook-marks.html"><i data-lucide="tags"></i>标记练习</a></nav><select id="lessonSelect" aria-label="选择课程" disabled><option>正在读取课程…</option></select><h1 id="lessonHeading"></h1></div>
+      <label class="search"><i data-lucide="search"></i><input id="search" type="search" placeholder="查找题目、页码、句子" aria-label="查找练习"></label>
+      <div id="unitTabs" class="unit-tabs" role="tablist" aria-label="课内单元"></div>
+      <div id="recordingsTools" class="recordings-tools" hidden><button id="manageUnmatched" class="text-button"><i data-lucide="folder-open"></i>未对应录音 <span id="unmatchedCount">0</span></button></div>
+      <div class="nav-summary"><span id="itemCount"></span><span id="doneCount"></span></div>
+      <nav id="exerciseNav" aria-label="练习目录"></nav>
+    </aside>
+    <section class="practice" aria-label="跟读练习">
+      <div class="exercise-heading">
+        <div><div id="sourceLabel" class="eyebrow"></div><h2 id="exerciseTitle">正在加载课程…</h2>
+          <div id="recordingProgress" class="recording-progress" role="status" aria-live="polite"><span id="recordingProgressText">正在读取录音…</span><progress id="recordingProgressBar" aria-label="本练习录音完成度" max="1" value="0" hidden></progress><small id="recordingProgressExtra" hidden></small></div>
+        </div>
+        <div class="heading-actions"><button id="doneButton" class="icon-button" title="标记已练习" aria-label="标记已练习" aria-pressed="false"><i data-lucide="check"></i></button><button id="sourceButton" class="icon-button" title="查看教材原页" aria-label="查看教材原页"><i data-lucide="scan-text"></i></button></div>
+      </div>
+      <div class="prompt-band"><span id="kindLabel"></span><p id="exercisePrompt"></p><p id="exerciseNote" class="muted"></p></div>
+      <div class="view-tools">
+        <div class="segmented" role="group" aria-label="练习模式"><label><input type="radio" name="mode" value="full" checked>完整文本</label><label><input type="radio" name="mode" value="prompt">只看提示</label></div>
+        <label><input type="checkbox" id="showRuby" checked> 注音</label><label><input type="checkbox" id="showChinese" checked> 中文</label>
+        <span id="turnCount" class="muted"></span>
+      </div>
+      <div id="turnList" aria-label="对话文本"></div>
+      <div id="freeAnswer" hidden><label for="personalText">我的回答（日文）</label><textarea id="personalText" rows="5" maxlength="1000" placeholder="填写自己的情况"></textarea><button id="useAnswer" class="text-button"><i data-lucide="check"></i>使用这段回答</button></div>
+      <div id="related" class="related"></div>
+      <section class="practice-notes"><label for="noteText">练习笔记</label><textarea id="noteText" rows="2" maxlength="10000"></textarea><span id="noteStatus" class="muted"></span></section>
+    </section>
+  </main>
+  <footer class="playback-panel">
+    <div class="transport">
+      <button id="previous" class="icon-button" title="上一句" aria-label="上一句"><i data-lucide="skip-back"></i></button>
+      <button id="play" class="icon-button primary" title="播放" aria-label="播放"><i data-lucide="play"></i></button>
+      <button id="next" class="icon-button" title="下一句" aria-label="下一句"><i data-lucide="skip-forward"></i></button>
+      <button id="loop" class="icon-button" title="单句循环" aria-label="单句循环" aria-pressed="false"><i data-lucide="repeat-1"></i></button>
+      <div class="playback-progress"><span id="currentLabel">未播放</span><input id="seek" aria-label="播放进度" type="range" min="0" max="1" step="0.01" value="0"><span id="audioTime">0:00 / 0:00</span></div>
+      <label class="select-label">播放倍速<select id="speed" aria-label="播放速度"><option value="0.6">0.6×</option><option value="0.8">0.8×</option><option value="0.9">0.9×</option><option value="1" selected>1.0×</option><option value="1.1">1.1×</option><option value="1.2">1.2×</option></select></label>
+      <button id="voiceSettings" class="icon-button" title="配音设置" aria-label="配音设置" disabled><i data-lucide="sliders-horizontal"></i></button><span id="voiceSummary" class="voice-summary"></span>
+      <div class="recording-controls"><button id="record" class="icon-button record" title="开始录音" aria-label="开始录音"><i data-lucide="mic"></i></button>
+        <div id="recordMeter" class="record-meter" data-state="idle" title="麦克风实时输入音量">
+          <div id="recordMeterBar" class="record-meter-track" role="meter" aria-label="麦克风实时音量" aria-valuemin="-80" aria-valuemax="0" aria-valuenow="-80" aria-valuetext="未录音"><span id="recordMeterLevel"></span></div>
+          <div class="record-meter-caption"><span id="recordMeterText">未录音</span><span id="recordTime">0:00</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="recordings-row"><span>本句录音</span><select id="takes" aria-label="选择本句录音"><option value="">本句暂无录音</option></select><audio id="recordedAudio" controls preload="metadata"></audio><button id="analyzeRecording" class="text-button analysis-entry" title="请先录制当前句" disabled><i data-lucide="chart-no-axes-combined"></i><span>跟读分析</span></button><button id="downloadRecording" class="icon-button small" title="下载录音" aria-label="下载录音"><i data-lucide="download"></i></button><button id="deleteRecording" class="icon-button small" title="删除这条录音" aria-label="删除这条录音"><i data-lucide="trash-2"></i></button><span id="notice" role="status" aria-live="polite"></span></div>
+  </footer>
+  <dialog id="sourceDialog"><div class="dialog-toolbar"><strong id="sourceTitle"></strong><button id="closeSource" class="icon-button" title="关闭原页" aria-label="关闭原页"><i data-lucide="x"></i></button></div><img id="sourceImage" alt="教材原页"></dialog>
+  <dialog id="unmatchedDialog" aria-labelledby="unmatchedTitle">
+    <div class="dialog-toolbar"><strong id="unmatchedTitle">未对应录音</strong><div class="heading-actions"><button id="refreshUnmatched" class="icon-button" title="刷新录音列表" aria-label="刷新录音列表"><i data-lucide="refresh-cw"></i></button><button id="closeUnmatched" class="icon-button" title="关闭录音管理" aria-label="关闭录音管理"><i data-lucide="x"></i></button></div></div>
+    <p id="unmatchedStatus" role="status" aria-live="polite"></p><div id="unmatchedList"></div>
+  </dialog>
+  <dialog id="voiceDialog" aria-labelledby="voiceTitle">
+    <form id="voiceForm">
+      <div class="dialog-toolbar"><div><strong id="voiceTitle">角色配音</strong><div id="voiceLesson" class="muted"></div></div><button type="button" id="closeVoice" class="icon-button" title="取消并关闭" aria-label="取消并关闭"><i data-lucide="x"></i></button></div>
+      <div class="voice-scope-bar"><div class="voice-scope-tabs" role="group" aria-label="配音适用范围"><button type="button" id="commonVoiceTab" aria-pressed="true">通用配音</button><button type="button" id="lessonVoiceTab" aria-pressed="false">本课特殊</button></div><button type="button" id="useCommonVoices" class="text-button" hidden>本课全部使用通用</button></div>
+      <div class="voice-workspace">
+      <nav id="voiceRoles" class="voice-roster" aria-label="本课全部配音角色"></nav>
+      <div class="voice-fields">
+        <div class="voice-role-scope"><div><strong id="voiceRoleName"></strong><div id="voiceScope" class="muted"></div></div><div class="voice-inheritance"><label id="inheritVoiceLabel" hidden><input id="inheritVoice" type="checkbox"><span id="inheritVoiceText">使用通用配音</span></label><button type="button" id="promoteVoice" class="text-button" hidden>设为通用</button></div></div>
+        <div class="voice-sample"><p id="voiceSample"></p><span id="voiceSampleSource" class="muted"></span></div>
+        <fieldset id="voiceParameters" class="voice-parameters" aria-label="声音参数">
+        <label class="voice-choice" for="speaker">音色<select id="speaker" aria-label="配音音色"></select></label>
+        <label class="voice-choice" for="voice">说话风格<select id="voice" aria-label="说话风格"></select></label>
+        <div class="voice-parameter"><label for="synthesisSpeed">生成语速</label><div class="parameter-inputs"><input id="synthesisSpeed" type="range" min="0.5" max="2" step="0.05" value="1"><input id="synthesisSpeedValue" aria-label="生成语速数值" type="number" min="0.5" max="2" step="0.05" value="1.00" required></div></div>
+        <div class="voice-parameter"><label for="emotion">情感强度 <span id="emotionStatus"></span></label><div class="parameter-inputs"><input id="emotion" type="range" min="0" max="2" step="0.05" value="1"><input id="emotionValue" aria-label="情感强度数值" type="number" min="0" max="2" step="0.05" value="1.00" required></div></div>
+        <div class="voice-parameter"><label for="tempo">节奏变化</label><div class="parameter-inputs"><input id="tempo" type="range" min="0" max="2" step="0.05" value="1"><input id="tempoValue" aria-label="节奏变化数值" type="number" min="0" max="2" step="0.05" value="1.00" required></div></div>
+        <div class="voice-parameter"><label for="pitch">音调高低</label><div class="parameter-inputs"><input id="pitch" type="range" min="-0.15" max="0.15" step="0.01" value="0"><input id="pitchValue" aria-label="音调高低数值" type="number" min="-0.15" max="0.15" step="0.01" value="0.00" required></div><p id="pitchWarning" class="muted" hidden>音高偏离 0.00 会损失音质。</p></div>
+        </fieldset>
+        <div id="voiceNotice" role="status" aria-live="polite"></div>
+      </div>
+      </div>
+      <div class="voice-actions"><button type="button" id="resetVoice" class="icon-button" title="恢复参数默认值" aria-label="恢复参数默认值"><i data-lucide="rotate-ccw"></i></button><button type="button" id="previewVoice" class="text-button"><i data-lucide="volume-2"></i><span>试听当前句</span></button><button type="submit" class="text-button apply-voice"><i data-lucide="check"></i>应用</button></div>
+    </form>
+  </dialog>
+  <dialog id="analysisDialog" aria-labelledby="analysisTitle">
+    <div class="dialog-toolbar"><div><strong id="analysisTitle">本句跟读分析</strong><div id="analysisContext" class="muted"></div></div><button id="closeAnalysis" class="icon-button" title="关闭分析" aria-label="关闭分析"><i data-lucide="x"></i></button></div>
+    <div class="analysis-target"><p id="analysisSentence" lang="ja"></p><span id="analysisReference" class="muted"></span></div>
+    <div class="analysis-status"><span id="analysisStatus" role="status" aria-live="polite"></span><button id="retryAnalysis" class="text-button" hidden><i data-lucide="rotate-cw"></i>重新分析</button></div>
+    <iframe id="analysisFrame" title="跟读识别结果与音频对比" hidden></iframe>
+  </dialog>
+  <audio id="voicePreview" preload="auto"></audio>
+  <audio id="referenceAudio" preload="auto"></audio>
+</body>
+</html>

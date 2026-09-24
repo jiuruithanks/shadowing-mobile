@@ -490,6 +490,7 @@
     createStoredZip,
     inspect,
     readEntries,
+    entryBlob,
     sha256Blob,
     safeEntryPath,
     validateManifest,
