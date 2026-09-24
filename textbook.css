@@ -5,10 +5,10 @@
 .exercise-variants small{font-size:10px;min-width:20px;color:#61796c}
 .variant-sentence{background:#edf7f2;border-left:3px solid var(--green)}
 .common-turn-label{display:block;font-size:10px;font-weight:400;line-height:1.6;white-space:nowrap;color:#728277}
-.group-study-progress{padding:10px 0;color:var(--green);font-size:12px}
-.sentence-done{display:flex;align-items:center;gap:4px;min-height:44px;font-size:11px;color:#667a6c;white-space:nowrap}
-.sentence-done input{width:17px;height:17px;accent-color:var(--green)}
-.tagged-turn.grouped-turn{grid-template-columns:minmax(0,1fr) 62px}
+#doneButton{display:none!important}
+.nav-summary{flex-wrap:wrap;gap:6px}
+#doneCount{font-size:11px;white-space:normal}
+.tagged-turn.grouped-turn{grid-template-columns:minmax(0,1fr) 44px}
 .grouped-turn .turn-tag-tools{flex-direction:column;align-items:center;justify-content:flex-start}
 .practice.has-group .prompt-band{margin-top:14px;padding:8px 0}
 .practice.has-group .view-tools{padding:12px 0}

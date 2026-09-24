@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 const audio = $("referenceAudio");
 const markedMode=document.body.dataset.practice==="marked";
+$("doneButton")?.remove();
 const state = {
   lesson:null, lessons:[], catalog:[], item:null, unit:"找兼职", turn:0, playing:false, pending:false, loop:false,
   epoch:0, voices:[], cache:new Map(), kana:new Map(), loadedKey:"",
@@ -167,7 +168,7 @@ function exerciseGroup(item=state.item) {
     const buckets=new Map(),groups=new Map();
     for(const candidate of state.lesson.items) {
       const number=/^(.*?)\s*[·・]\s*(例\d*|\d+)$/.exec(candidate.number||"");
-      if(!number||candidate.kind==="自由回答"||itemTurns(candidate).length<2)continue;
+      if(!number||candidate.kind==="自由回答"||!itemTurns(candidate).length)continue;
       const key=JSON.stringify([candidate.unit,candidate.book,candidate.page,candidate.title,number[1].trim()]);
       if(!buckets.has(key))buckets.set(key,[]);
       buckets.get(key).push(candidate);
@@ -194,20 +195,14 @@ function sentenceTagSources(index) {
   return sentenceSources(state.item,index).map(item=>TextbookTags.sentence(state.lesson,item,index,itemTurns(item)[index]));
 }
 function variantLabel(item) {return item.number.match(/[·・]\s*(例\d*|\d+)$/)?.[1]||item.number;}
-function sentenceDone(item,index) {
-  const sources=sentenceSources(item,index);
-  const explicit=read("turnDone:"+sources[0].id+":"+index);
-  return explicit?explicit==="1":sources.some(i=>read("done:"+i.id)==="1");
-}
-function setSentenceDone(item,index,value) {
-  return save("turnDone:"+sentenceSources(item,index)[0].id+":"+index,value?"1":"0");
-}
 function groupSentences(group) {
   return group.base.turns.flatMap((_,index)=>index===group.variable?
     group.items.map(item=>({item,index})):[{item:group.base,index}]);
 }
-function practiceDone(item) {
-  return exerciseGroup(item)?itemTurns(item).every((_,index)=>sentenceDone(item,index)):read("done:"+item.id)==="1";
+function recordingRatio(recorded,total) {
+  if(!total)return "暂无可录句子";
+  const percent=Math.round(recorded/total*100);
+  return `已录 ${recorded}/${total} 句（${percent}%） · 未录 ${total-recorded}/${total} 句（${100-percent}%）`;
 }
 function groupRecordingProgress(item) {
   const group=exerciseGroup(item);if(!group)return recordingProgress(item);
@@ -215,19 +210,17 @@ function groupRecordingProgress(item) {
   const counts=groupSentences(group).map(s=>progress.get(s.item.id).counts[s.index]);
   const known=[...progress.values()].every(p=>p.known),total=counts.length,recorded=counts.filter(Boolean).length;
   return {known,total,recorded,counts,status:!known?"loading":recorded===total?"complete":recorded?"partial":"none",
-    label:known?`已录 ${recorded}/${total} 句 · ${Math.round(recorded/total*100)}%`:"正在读取录音…",
+    label:known?recordingRatio(recorded,total):"正在读取录音…",
     extras:[...new Set([...progress.values()].flatMap(p=>p.extras))]};
 }
 function refreshGroupControls() {
   const group=exerciseGroup();if(!group||markedMode)return;
-  const sentences=groupSentences(group),done=sentences.filter(s=>sentenceDone(s.item,s.index)).length;
-  const summary=$("groupStudyProgress");if(summary)summary.textContent=`已练 ${done}/${sentences.length} 句`;
   for(const b of document.querySelectorAll(".exercise-variants [data-variant]")) {
-    const item=group.items.find(i=>i.id===b.dataset.variant),recorded=recordingProgress(item).counts[group.variable]>0;
-    b.querySelector("small").textContent=recorded?"已录":sentenceDone(item,group.variable)?"已练":"";
+    const item=group.items.find(i=>i.id===b.dataset.variant);
+    if(!item)continue;
+    const recorded=recordingProgress(item).counts[group.variable]>0;
+    b.querySelector("small").textContent=recorded?"已录":"未录";
   }
-  for(const box of $("turnList").querySelectorAll(".sentence-done input"))box.checked=sentenceDone(state.item,Number(box.dataset.turn));
-  $("doneButton").setAttribute("aria-pressed",String(practiceDone(state.item)));
 }
 function renderVariantTabs(group) {
   const bar=document.createElement("div");bar.className="exercise-variants";bar.setAttribute("role","tablist");bar.setAttribute("aria-label","切换替换句");
@@ -321,7 +314,7 @@ function recordingProgress(item) {
   const recorded=counts.filter(n=>n>0).length,total=turns.length;
   const status=!known?state.recordingIndexStatus:!total?"empty":!recorded?"none":recorded===total?"complete":"partial";
   const label=!known?(status==="error"?"录音状态无法读取":"正在读取录音…"):
-    total?`已录 ${recorded}/${total} 句 · ${Math.round(recorded/total*100)}%`:"暂无可录句子";
+    recordingRatio(recorded,total);
   const unmatched=legacy+outdated;
   const extras=unmatched?[`未对应录音 ${unmatched} 条`]:[];
   return {known,counts,recorded,total,status,label,extras};
@@ -331,15 +324,18 @@ function updateRecordingProgress(refreshNav=true) {
   if(markedMode)MarkedPractice.renderNav();
   if(refreshNav&&state.navMode==="recordings"){renderNav();return;}
   $("unmatchedCount").textContent=state.recordingIndexStatus==="ready"?String(unmatchedRecordings().length):"—";
+  let navTotal=0,navRecorded=0,navKnown=true;
   for(const el of $("exerciseNav").querySelectorAll(".exercise-recording")) {
     const item=state.lesson.items.find(i=>i.id===el.dataset.item);if(!item)continue;
     const p=groupRecordingProgress(item);
+    navTotal+=p.total;navRecorded+=p.recorded;navKnown=navKnown&&p.known;
     el.dataset.status=p.status;
     el.firstElementChild.textContent=p.known?(p.total?`已录 ${p.recorded}/${p.total}`:"暂无句子"):"录音 —";
-    el.lastElementChild.textContent=p.extras.length?"有未对应录音":"";
-    el.lastElementChild.hidden=!p.extras.length;
+    el.lastElementChild.textContent=[p.known&&p.total?`未录 ${p.total-p.recorded}/${p.total}`:"",p.extras.length?"有未对应录音":""].filter(Boolean).join(" · ");
+    el.lastElementChild.hidden=!el.lastElementChild.textContent;
     el.title=[p.label,...p.extras].join("；");el.setAttribute("aria-label",el.title);
   }
+  if(!markedMode)$("doneCount").textContent=navKnown?(navTotal?`已录 ${navRecorded}/${navTotal} · 未录 ${navTotal-navRecorded}/${navTotal}`:""):"读取录音中…";
   if(!state.item)return;
   const p=markedMode?recordingProgress(state.item):groupRecordingProgress(state.item);
   $("recordingProgress").dataset.status=p.status;
@@ -396,12 +392,6 @@ function activeTurn() {
   renderTakes();
   if(markedMode)MarkedPractice.updateControls();
 }
-function markDone() {
-  const key="done:"+state.item.id, done=!practiceDone(state.item);
-  if(exerciseGroup())itemTurns().forEach((_,index)=>setSentenceDone(state.item,index,done));
-  save(key,done?"1":"0"); $("doneButton").setAttribute("aria-pressed",String(done)); renderNav();
-  refreshGroupControls();
-}
 function renderNav() {
   if(markedMode){MarkedPractice.renderNav();return;}
   const query=$("search").value.trim().toLowerCase();
@@ -417,8 +407,6 @@ function renderNav() {
   }
   $("recordingsTools").hidden=!recorded;
   $("itemCount").textContent=available.length+" 个练习";
-  $("doneCount").textContent=recorded?available.reduce((n,item)=>n+groupRecordingProgress(item).counts.reduce((a,b)=>a+b,0),0)+" 条录音":
-    "已练 "+available.filter(i=>(exerciseGroup(i)?.items||[i]).every(practiceDone)).length;
   $("exerciseNav").replaceChildren();
   let book="";
   for(const item of available) {
@@ -434,9 +422,6 @@ function renderNav() {
       const title=document.createElement("span");title.textContent=item.title;
       const source=document.createElement("small");source.textContent=(recorded?item.book+" · ":"")+item.page+"页 · "+(group?group.number+" · "+group.items.length+" 个版本":item.number);
       label.append(title,source);button.append(label);
-      if((group?.items||[item]).every(practiceDone)) {
-        const check=document.createElement("i"); check.dataset.lucide="check"; check.className="complete"; button.append(check);
-      }
       const progress=document.createElement("span");progress.className="exercise-recording";progress.dataset.item=item.id;
       progress.append(document.createElement("span"),document.createElement("small"));button.append(progress);
       button.addEventListener("click",()=>{
@@ -503,7 +488,6 @@ async function selectItem(id,preferredTurn) {
   $("exercisePrompt").textContent=item.prompt; $("exerciseNote").textContent=item.note;
   document.querySelector(".practice").classList.toggle("has-group",!markedMode&&Boolean(exerciseGroup(item)));
   $("exercisePrompt").hidden=!markedMode&&Boolean(exerciseGroup(item))&&["按教材原例练习。","按题目和图片展开的参考答案。","按原页提示练习。"].includes(item.prompt);
-  $("doneButton").setAttribute("aria-pressed",String(practiceDone(item)));
   $("freeAnswer").hidden=item.kind!=="自由回答"; $("personalText").value=read("answer:"+id);
   $("noteText").value=read("note:"+id); $("noteStatus").textContent="";
   document.querySelector('label[for="noteText"]').textContent=exerciseGroup(item)?variantLabel(item)+" · 练习笔记":"练习笔记";
@@ -523,9 +507,6 @@ function renderRelated() {
 function renderTurns() {
   const list=$("turnList"); list.replaceChildren(); const turns=itemTurns();
   const group=markedMode?null:exerciseGroup();
-  if(group) {
-    const summary=document.createElement("div");summary.className="group-study-progress";summary.id="groupStudyProgress";list.append(summary);
-  }
   $("turnCount").textContent=turns.length?turns.length+" 段":"";
   $("play").disabled=!turns.length||!state.voices.length;
   $("previous").disabled=!turns.length; $("next").disabled=!turns.length;
@@ -557,12 +538,6 @@ function renderTurns() {
       catch(e){notice(e.message);}
     };
     tools.append(tagButton);
-    if(group){
-      const label=document.createElement("label");label.className="sentence-done";
-      const check=document.createElement("input");check.type="checkbox";check.dataset.turn=index;check.checked=sentenceDone(state.item,index);
-      check.onchange=()=>{setSentenceDone(state.item,index,check.checked);renderNav();refreshGroupControls();};
-      label.append(check,document.createTextNode("已练"));tools.append(label);
-    }
     row.append(button,tools);list.append(row);
     addRuby(ja,turn.ja);
   }
@@ -667,13 +642,11 @@ $("loop").onclick=()=>{
 $("speed").onchange=()=>{applyPlaybackSpeed();save("speed",$("speed").value);};
 audio.addEventListener("ended",()=>{
   if(!state.playing)return;
-  if(exerciseGroup()&&!markedMode){setSentenceDone(state.item,state.turn,true);refreshGroupControls();}
   if(state.loop)playTurn(state.turn);
   else if(markedMode){state.playing=false;updatePlayButton();}
   else if(state.turn<itemTurns().length-1)playTurn(state.turn+1);
   else {
-    state.playing=false;updatePlayButton();save("done:"+state.item.id,"1");
-    $("doneButton").setAttribute("aria-pressed","true");renderNav();
+    state.playing=false;updatePlayButton();
   }
 });
 audio.addEventListener("timeupdate",()=>{
@@ -687,7 +660,6 @@ audio.addEventListener("error",()=>{
 });
 $("seek").oninput=()=>{if(Number.isFinite(audio.duration))audio.currentTime=Number($("seek").value);};
 $("search").oninput=()=>{if(state.lesson)renderNav();};
-$("doneButton").onclick=()=>{if(state.item)markDone();};
 $("sourceButton").onclick=()=>{
   if(!state.item)return;
   $("sourceTitle").textContent=state.item.book+" · 第"+state.item.page+"页";
