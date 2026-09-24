@@ -3,6 +3,14 @@ window.TextbookPackage=(()=>{
   const FORMAT="textbook-offline-course",RETURN="textbook-practice-return",VERSION=1;
   const json=value=>new Blob([JSON.stringify(value)],{type:"application/json"});
   function check(ok,message){if(!ok)throw new Error(message);}
+  function optionalStorage(name){
+    return new Promise(resolve=>{
+      const timer=setTimeout(()=>resolve(null),2000);
+      Promise.resolve().then(()=>navigator.storage?.[name]?.()).then(
+        value=>{clearTimeout(timer);resolve(value);},
+        ()=>{clearTimeout(timer);resolve(null);});
+    });
+  }
   async function pack(format,payload,files,progress=()=>{}) {
     check(files.size<1000,"文件超过 999 个，请减少所选练习或分课导出。");
     const entries=[],descriptors=[];
@@ -28,22 +36,32 @@ window.TextbookPackage=(()=>{
       check(entry&&entry.uncompressedSize===descriptor.size,"文件缺失或大小不符："+descriptor.path);
       const blob=await ShadowingPackage.entryBlob(file,entry,descriptor.type||"application/octet-stream");
       check(await ShadowingPackage.sha256Blob(blob)===descriptor.sha256,"文件校验失败："+descriptor.path);
-      files.set(descriptor.path,blob);progress(files.size,data.files.length);
+      // Detach Files-app slices before IndexedDB stores them (notably on iOS).
+      files.set(descriptor.path,new Blob([await blob.arrayBuffer()],{type:blob.type}));progress(files.size,data.files.length);
     }
     check(entries.size===files.size+1,"包内存在未登记的文件");
     return {payload:data.payload,files};
   }
   let database;
   function db(){return database||=(new Promise((resolve,reject)=>{
+    let expired=false;
+    const fail=error=>{expired=true;clearTimeout(timer);reject(error);};
+    const timer=setTimeout(()=>fail(new Error("本机存储未响应，请关闭其他教材页面后重试；不要清除网站数据。")),15000);
     const r=indexedDB.open("textbook-offline-courses",1);
     r.onupgradeneeded=()=>r.result.createObjectStore("courses",{keyPath:"id"});
-    r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);
-  }));}
+    r.onblocked=()=>fail(new Error("本机存储被其他页面占用，请关闭其他教材页面后重试。"));
+    r.onsuccess=()=>{clearTimeout(timer);if(expired){r.result.close();return;}r.result.onversionchange=()=>{r.result.close();database=null;};resolve(r.result);};
+    r.onerror=()=>fail(r.error);
+  })).catch(error=>{database=null;throw error;});}
   async function request(mode,action){
     const database=await db();return new Promise((resolve,reject)=>{
-      const tx=database.transaction("courses",mode),r=action(tx.objectStore("courses"));let value;
-      r.onsuccess=()=>value=r.result;tx.oncomplete=()=>resolve(value);
-      tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error("存储已中止"));
+      const tx=database.transaction("courses",mode);let value;
+      const timer=setTimeout(()=>{try{tx.abort();}catch{}reject(new Error("本机保存超时，请重试。原有课程、录音和笔记未删除。"));},60000);
+      tx.oncomplete=()=>{clearTimeout(timer);resolve(value);};
+      tx.onerror=()=>{clearTimeout(timer);reject(tx.error);};
+      tx.onabort=()=>{clearTimeout(timer);reject(tx.error||new Error("存储已中止"));};
+      try{const r=action(tx.objectStore("courses"));r.onsuccess=()=>value=r.result;}
+      catch(error){clearTimeout(timer);try{tx.abort();}catch{}reject(error);}
     });
   }
   function validateCourse(course,files){
@@ -66,11 +84,13 @@ window.TextbookPackage=(()=>{
       }
     }
   }
-  async function importCourse(file,progress){
+  async function importCourse(file,progress=()=>{}){
     const {payload,files}=await unpack(file,FORMAT,progress);validateCourse(payload?.course,files);
     check(Array.isArray(payload.voices)&&payload.voices.length>0,"缺少音色信息");
-    const estimate=await navigator.storage?.estimate?.();
+    progress(0,1,"检查本机存储");
+    const estimate=await optionalStorage("estimate");
     if(estimate?.quota)check(estimate.quota-estimate.usage>file.size*1.15,"本机空间不足，请先删除不需要的课程。");
+    progress(0,1,"读取已有课程");
     const existing=await request("readonly",s=>s.get(payload.course.id));
     if(existing&&!confirm("此课已导入。更新同编号练习并保留其他练习、录音和笔记？"))return null;
     const items=new Map((existing?.course.items||[]).map(i=>[i.id,i]));payload.course.items.forEach(i=>items.set(i.id,i));
@@ -79,7 +99,11 @@ window.TextbookPackage=(()=>{
     const used=new Set(course.items.flatMap(i=>[i.image,...i.turns.map(t=>t.offlineAudio)]).filter(Boolean));
     const kept=Object.fromEntries(Object.entries(mergedFiles).filter(([key])=>used.has(key)));
     const row={id:course.id,course,voices:payload.voices,files:kept,updated:Date.now(),size:Object.values(kept).reduce((n,b)=>n+b.size,0)};
-    await request("readwrite",s=>s.put(row));await navigator.storage?.persist?.().catch(()=>false);return row;
+    progress(0,1,"正在保存课程到本机，请保持页面打开");
+    await request("readwrite",s=>s.put(row));
+    // Persistence is advisory; a pending permission must not block a committed import.
+    void optionalStorage("persist");
+    progress(1,1,"课程已保存到本机");return row;
   }
   function download(blob,name){
     const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
