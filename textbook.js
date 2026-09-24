@@ -469,7 +469,7 @@ async function addRuby(target,text) {
   try {
     if(!state.kana.has(text))state.kana.set(text,api("/api/kana",{text}).catch(e=>{state.kana.delete(text);throw e;}));
     const result=await state.kana.get(text); if(!target.isConnected)return;
-    const tokens=result.tokens||[]; if(tokens.map(t=>t.surface).join("")!==text)return;
+    const tokens=result.tokens||[]; if(tokens.map(t=>t.surface).join("").normalize("NFKC").trim()!==text.normalize("NFKC").trim())return;
     target.replaceChildren();
     for(const token of tokens) {
       if(/[一-龯々]/.test(token.surface)&&token.reading&&token.reading!==token.surface) {

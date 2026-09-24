@@ -1,4 +1,4 @@
-const CACHE_NAME = "tokyo-shadowing-mobile-v18-textbook1";
+const CACHE_NAME = "tokyo-shadowing-mobile-v19-kana-normalization";
 const BASE_URL = new URL("./", self.location.href);
 const APP_SHELL_PATHS = [
   "mobile.html",

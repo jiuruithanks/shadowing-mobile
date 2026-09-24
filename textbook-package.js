@@ -61,7 +61,8 @@ window.TextbookPackage=(()=>{
         check(typeof turn.ja==="string"&&typeof turn.zh==="string"&&typeof turn.role==="string","句子内容无效");
         check(turn.offlineAudio&&files.has(turn.offlineAudio)&&files.get(turn.offlineAudio).type.startsWith("audio/"),"句子音频缺失");
         check(Array.isArray(turn.offlineTokens)&&turn.offlineTokens.every(t=>typeof t.surface==="string"&&typeof t.reading==="string"),"注音缺失");
-        check(turn.offlineTokens.map(t=>t.surface).join("")===turn.ja,"注音与原文不符");
+        // The kana service normalizes compatibility characters before tokenizing.
+        check(turn.offlineTokens.map(t=>t.surface).join("").normalize("NFKC").trim()===turn.ja.normalize("NFKC").trim(),"注音与原文不符");
       }
     }
   }
