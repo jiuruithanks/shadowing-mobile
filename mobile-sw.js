@@ -1,4 +1,4 @@
-const CACHE_NAME = "tokyo-shadowing-mobile-v24-recording-progress";
+const CACHE_NAME = "tokyo-shadowing-mobile-v25-course-tags";
 const BASE_URL = new URL("./", self.location.href);
 const APP_SHELL_PATHS = [
   "textbook-phone-ui.js?v=1",

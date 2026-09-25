@@ -22,7 +22,7 @@
     const file=$("courseFile").files[0];if(!file)return;$("importCourse").disabled=true;
     try{
       const row=await TextbookPackage.importCourse(file,(n,total,phase)=>$("libraryStatus").textContent=phase||`正在校验 ${n}/${total}`);
-      $("libraryStatus").textContent=row?"课程已保存到本机。":"未更新课程。";await render();
+      $("libraryStatus").textContent=row?(row.tagWarning||(row.tagsImported?"课程和标签已保存到本机。":"课程已保存到本机；此包未包含标签。")):"未更新课程。";await render();
     }catch(e){$("libraryStatus").textContent=e.name==="QuotaExceededError"?"存储空间不足，原课程未改动。":e.message;}
     finally{$("importCourse").disabled=false;$("courseFile").value="";}
   };

@@ -153,7 +153,7 @@ window.TextbookTransfer=(()=>{
           item.related=item.related.filter(id=>selected.has(id));
         }
         TextbookPackage.validateCourse(course,files);
-        const blob=await TextbookPackage.pack(TextbookPackage.FORMAT,{course,voices:state.voices},files,(n,total)=>progress.textContent=`校验打包 ${n}/${total}`);
+        const blob=await TextbookPackage.pack(TextbookPackage.FORMAT,{course,voices:state.voices,tags:snapshot([lesson]).tags},files,(n,total)=>progress.textContent=`校验打包 ${n}/${total}`);
         TextbookPackage.download(blob,`第${lesson.number}课-${lesson.title}.textbook`);progress.textContent="课程包已导出。";
       }catch(e){progress.textContent=e.message;}finally{busy=false;start.disabled=false;close.disabled=false;list.inert=false;images.disabled=false;}
     };

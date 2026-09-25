@@ -72,6 +72,27 @@ window.TextbookTags=(()=>{
     const ids=data.sentences.filter(s=>keys.has(s.key)).flatMap(s=>s.tagIds);
     return data.tags.filter(t=>ids.includes(t.id));
   }
+  function merge(incoming,lessons) {
+    if(!incoming)return;
+    if(!Array.isArray(incoming.tags)||!Array.isArray(incoming.sentences))throw new Error("包内标记格式无效，原标记未改动。");
+    update(local=>{
+      const mapping=new Map();
+      for(const tag of incoming.tags){
+        if(typeof tag.id!=="string"||typeof tag.name!=="string"||!tag.name.trim()||tag.name.length>40)continue;
+        const sameName=local.tags.find(t=>t.name===tag.name),sameId=local.tags.find(t=>t.id===tag.id);
+        const id=sameName?.id||(!sameId?tag.id:crypto.randomUUID());mapping.set(tag.id,id);
+        if(!local.tags.some(t=>t.id===id))local.tags.push({id,name:tag.name});
+      }
+      for(const entry of incoming.sentences){
+        const lesson=lessons.find(l=>l.id===entry.lessonId),item=lesson?.items.find(i=>i.id===entry.exerciseId);
+        if(!item||!Number.isInteger(entry.index)||typeof entry.text!=="string"||typeof entry.role!=="string"||!Array.isArray(entry.tagIds))continue;
+        if(entry.key!==JSON.stringify([lesson.id,item.id,entry.index,entry.role,entry.text]))continue;
+        const ids=entry.tagIds.map(id=>mapping.get(id)).filter(Boolean),old=local.sentences.find(s=>s.key===entry.key);
+        if(old)old.tagIds=[...new Set([...old.tagIds,...ids])];
+        else if(ids.length)local.sentences.push({...entry,tagIds:ids});
+      }
+    });
+  }
   function subscribe(callback) {
     window.addEventListener(changed,callback);
     window.addEventListener("storage",event=>{if(event.key===key||event.key===null)callback();});
@@ -139,5 +160,5 @@ window.TextbookTags=(()=>{
     if(!dialog?.open)return;
     try {renderOptions();}catch(e){dialog.querySelector("#tagPickerStatus").textContent=e.message;}
   });
-  return {read,create,rename,remove,sentence,assign,labels,subscribe,element,iconButton,chips,openPicker};
+  return {read,create,rename,remove,sentence,assign,labels,merge,subscribe,element,iconButton,chips,openPicker};
 })();

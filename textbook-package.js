@@ -101,6 +101,12 @@ window.TextbookPackage=(()=>{
     const row={id:course.id,course,voices:payload.voices,files:kept,updated:Date.now(),size:Object.values(kept).reduce((n,b)=>n+b.size,0)};
     progress(0,1,"正在保存课程到本机，请保持页面打开");
     await request("readwrite",s=>s.put(row));
+    if(payload.tags) {
+      try {
+        if(!window.TextbookTags?.merge)throw new Error("请联网刷新程序后重新导入，以恢复标签。");
+        TextbookTags.merge(payload.tags,[course]);row.tagsImported=true;
+      } catch(error) {row.tagWarning="课程已保存，但标签未恢复："+error.message;}
+    }
     // Persistence is advisory; a pending permission must not block a committed import.
     void optionalStorage("persist");
     progress(1,1,"课程已保存到本机");return row;
