@@ -17,14 +17,18 @@ document.addEventListener("DOMContentLoaded",()=>{
   const menu=sheet("教材与同步"),menuButton=iconButton("ellipsis","教材与同步");
   menuButton.id="phoneMenu";header.append(menuButton);menuButton.onclick=()=>menu.showModal();
   const library=document.createElement("a");library.href="mobile-textbook-library.html";library.textContent="教材库";menu.append(library);
-  const exportButton=document.createElement("button");exportButton.textContent="导出全部练习到电脑";
+  const exportButton=document.createElement("button");exportButton.textContent="导出练习包（课程/全部）";
   const status=document.createElement("p");status.setAttribute("role","status");
   exportButton.onclick=async()=>{
-    exportButton.disabled=true;status.textContent="正在打包全部课程的录音、笔记、标记和进度…";
-    try{await TextbookTransfer.exportPractice();status.textContent="练习包已导出，请在电脑的文件菜单中选择“导入手机练习记录”。";}
+    exportButton.disabled=true;status.textContent="";
+    try{menu.close();await TextbookTransfer.exportPractice();}
     catch(error){status.textContent=error.message;}finally{exportButton.disabled=false;}
   };
   menu.append(exportButton,status);
+  const importButton=document.createElement("button");importButton.textContent="导入练习包";
+  importButton.onclick=()=>{menu.close();TextbookTransfer.chooseImport();};menu.append(importButton);
+  const backups=document.createElement("button");backups.textContent="本机数据备份";
+  backups.onclick=()=>{menu.close();TextbookTransfer.backupsDialog().catch(e=>notice(e.message));};menu.append(backups);
   const variants=document.createElement("button");variants.textContent="同步时保留的笔记与回答";
   variants.onclick=()=>{menu.close();TextbookTransfer.variantsDialog();};
   menu.addEventListener("close",()=>status.textContent="");

@@ -19,15 +19,15 @@ window.TextbookPackage=(()=>{
       descriptors.push({path,size:blob.size,type:blob.type,sha256:await ShadowingPackage.sha256Blob(blob)});
       entries.push({name:path,data:blob});progress(descriptors.length,files.size);
     }
-    entries.push({name:"manifest.json",data:json({format,version:VERSION,payload,files:descriptors})});
+    entries.push({name:"manifest.json",data:json({format,version:format===RETURN?2:VERSION,payload,files:descriptors})});
     return ShadowingPackage.createStoredZip(entries);
   }
   async function unpack(file,format,progress=()=>{}) {
-    check(file.size<2*1024**3,"包超过 2 GB，请分练习导出。");
+    check(file.size<2*1024**3,"包超过 2 GB，请按课程导出。");
     const entries=await ShadowingPackage.readEntries(file,format===RETURN?10001:1000),manifest=entries.get("manifest.json");
-    check(manifest&&manifest.uncompressedSize<16*1024**2,"缺少或无效的包清单");
+    check(manifest&&manifest.uncompressedSize<64*1024**2,"缺少或无效的包清单");
     const data=JSON.parse(await (await ShadowingPackage.entryBlob(file,manifest)).text());
-    check(data.format===format&&data.version===VERSION,"包类型或版本不支持");
+    check(data.format===format&&[1,2].includes(data.version),"包类型或版本不支持");
     check(Array.isArray(data.files)&&data.files.length<=(format===RETURN?10000:999),"文件数量无效");
     const files=new Map();
     for(const descriptor of data.files){
@@ -91,6 +91,7 @@ window.TextbookPackage=(()=>{
     const estimate=await optionalStorage("estimate");
     if(estimate?.quota)check(estimate.quota-estimate.usage>file.size*1.15,"本机空间不足，请先删除不需要的课程。");
     progress(0,1,"读取已有课程");
+    await TextbookSync.ready();
     const existing=await request("readonly",s=>s.get(payload.course.id));
     if(existing&&!confirm("此课已导入。更新同编号练习并保留其他练习、录音和笔记？"))return null;
     const items=new Map((existing?.course.items||[]).map(i=>[i.id,i]));payload.course.items.forEach(i=>items.set(i.id,i));
@@ -101,10 +102,11 @@ window.TextbookPackage=(()=>{
     const row={id:course.id,course,voices:payload.voices,files:kept,updated:Date.now(),size:Object.values(kept).reduce((n,b)=>n+b.size,0)};
     progress(0,1,"正在保存课程到本机，请保持页面打开");
     await request("readwrite",s=>s.put(row));
-    if(payload.tags) {
+    if(payload.tags||payload.sync) {
       try {
-        if(!window.TextbookTags?.merge)throw new Error("请联网刷新程序后重新导入，以恢复标签。");
-        TextbookTags.merge(payload.tags,[course]);row.tagsImported=true;
+        if(!window.TextbookTransfer?.importPayload)throw new Error("请联网刷新程序后重新导入，以恢复标签。");
+        const result=await TextbookTransfer.importPayload({takes:[],sync:payload.sync,study:{tags:payload.tags}},new Map(),"导入课程中的标签");
+        row.tagsImported=Boolean(result);
       } catch(error) {row.tagWarning="课程已保存，但标签未恢复："+error.message;}
     }
     // Persistence is advisory; a pending permission must not block a committed import.

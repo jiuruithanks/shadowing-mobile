@@ -18,6 +18,11 @@
     window.lucide?.createIcons();
   }
   $("importCourse").onclick=()=>$("courseFile").click();
+  const sync=el("details"),summary=el("summary","练习同步与备份"),exportButton=el("button","导出练习包"),importButton=el("button","导入练习包"),backups=el("button","本机数据备份");
+  exportButton.onclick=()=>TextbookTransfer.exportPractice().catch(e=>$("libraryStatus").textContent=e.message);
+  importButton.onclick=()=>{try{TextbookTransfer.chooseImport();}catch(e){$("libraryStatus").textContent=e.message;}};
+  backups.onclick=()=>TextbookTransfer.backupsDialog().catch(e=>$("libraryStatus").textContent=e.message);
+  sync.append(summary,exportButton,importButton,backups);$("courseLibrary").before(sync);
   $("courseFile").onchange=async()=>{
     const file=$("courseFile").files[0];if(!file)return;$("importCourse").disabled=true;
     try{

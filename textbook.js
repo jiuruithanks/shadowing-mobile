@@ -201,6 +201,7 @@ function groupSentences(group) {
 }
 function recordingRatio(recorded,total) {
   if(!total)return "暂无可录句子";
+  if(recorded>=total)return "";
   const percent=Math.round(recorded/total*100);
   return `已录 ${recorded}/${total} 句（${percent}%） · 未录 ${total-recorded}/${total} 句（${100-percent}%）`;
 }
@@ -330,19 +331,22 @@ function updateRecordingProgress(refreshNav=true) {
     const p=groupRecordingProgress(item);
     navTotal+=p.total;navRecorded+=p.recorded;navKnown=navKnown&&p.known;
     el.dataset.status=p.status;
-    el.firstElementChild.textContent=p.known?(p.total?`已录 ${p.recorded}/${p.total}`:"暂无句子"):"录音 —";
-    el.lastElementChild.textContent=[p.known&&p.total?`未录 ${p.total-p.recorded}/${p.total}`:"",p.extras.length?"有未对应录音":""].filter(Boolean).join(" · ");
+    el.hidden=p.known&&p.total>0&&p.recorded>=p.total&&!p.extras.length;
+    el.firstElementChild.textContent=p.known?(p.total?(p.recorded<p.total?`已录 ${p.recorded}/${p.total}`:""):"暂无句子"):"录音 —";
+    el.firstElementChild.hidden=!el.firstElementChild.textContent;
+    el.lastElementChild.textContent=[p.known&&p.total&&p.recorded<p.total?`未录 ${p.total-p.recorded}/${p.total}`:"",p.extras.length?"有未对应录音":""].filter(Boolean).join(" · ");
     el.lastElementChild.hidden=!el.lastElementChild.textContent;
     el.title=[p.label,...p.extras].join("；");el.setAttribute("aria-label",el.title);
   }
-  if(!markedMode)$("doneCount").textContent=navKnown?(navTotal?`已录 ${navRecorded}/${navTotal} · 未录 ${navTotal-navRecorded}/${navTotal}`:""):"读取录音中…";
+  if(!markedMode)$("doneCount").textContent=navKnown?(navTotal&&navRecorded<navTotal?`已录 ${navRecorded}/${navTotal} · 未录 ${navTotal-navRecorded}/${navTotal}`:""):"读取录音中…";
   if(!state.item)return;
   const p=markedMode?recordingProgress(state.item):groupRecordingProgress(state.item);
   $("recordingProgress").dataset.status=p.status;
+  $("recordingProgress").hidden=p.known&&p.total>0&&p.recorded>=p.total&&!p.extras.length;
   $("recordingProgressText").textContent=p.label;
   $("recordingProgressExtra").textContent=p.extras.join(" · ");
   $("recordingProgressExtra").hidden=!p.extras.length;
-  $("recordingProgressBar").hidden=!p.known||!p.total;
+  $("recordingProgressBar").hidden=!p.known||!p.total||p.recorded>=p.total;
   $("recordingProgressBar").max=p.total||1;$("recordingProgressBar").value=p.recorded;
   for(const el of $("turnList").querySelectorAll(".turn-recording")) {
     const count=recordingProgress(state.item).counts[Number(el.dataset.turn)]||0;
@@ -474,6 +478,7 @@ async function selectItem(id,preferredTurn) {
   stopPreview(); cancelPlayback(); clearAudio(); $("recordedAudio").pause();
   if($("voiceDialog").open)$("voiceDialog").close();
   if($("analysisDialog").open)closeSentenceAnalysis();
+  livePractice?.close();
   document.body.classList.remove("nav-open"); $("navToggle").setAttribute("aria-expanded","false");
   state.item=item; state.unit=item.unit; state.takes=[]; readPersonal(item);
   const lastTurn=preferredTurn===undefined?Number(read("turn:"+id,"0")):preferredTurn;
@@ -677,14 +682,7 @@ $("useAnswer").onclick=()=>{
   }
 };
 function openDB() {
-  return new Promise((resolve,reject)=>{
-    const request=indexedDB.open("textbook-shadowing",1);
-    request.onupgradeneeded=()=>{
-      const store=request.result.createObjectStore("recordings",{keyPath:"id"});
-      store.createIndex("exercise","exercise");
-    };
-    request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
-  });
+  return TextbookSync.db();
 }
 async function dbRequest(mode,action) {
   const db=await state.db;
@@ -726,13 +724,13 @@ function renderTakes() {
     const rows=state.takes.filter(t=>takeMatches(t));
     const bound=rows.filter(t=>t.sentence),legacy=rows.filter(t=>!t.sentence);
     if(!bound.length)$("takes").append(new Option("本句暂无录音",""));
-    for(const take of [...bound,...legacy]) {
+    for(const take of [...bound.slice(0,1),...legacy]) {
       const option=document.createElement("option");option.value=take.id;
       const label=!take.sentence?"旧录音 · ":take.sentence.text!==currentSentence()?.text?"旧文本 · ":"";
-      option.textContent=(window.TextbookOffline?`第 ${rows.length-rows.indexOf(take)} 次 · `:"")+label+new Date(take.created).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
+      option.textContent=label+new Date(take.created).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
       $("takes").append(option);
     }
-    if(rows.some(t=>t.id===selected))$("takes").value=selected;
+    if([...$("takes").options].some(t=>t.value===selected))$("takes").value=selected;
     else $("takes").value=bound[0]?.id||"";
     selectTake();
 }
@@ -762,7 +760,7 @@ $("deleteRecording").onclick=async()=>{
   const id=$("takes").value;if(!id||!confirm("删除选中的这一条录音？"))return;
   const exercise=selectedTake()?.exercise,viewId=state.item.id;
   try{
-    await dbRequest("readwrite",store=>store.delete(id));
+    await TextbookSync.deleteRecording(id);
     state.recordingIndex.get(exercise)?.delete(id);updateRecordingProgress();
     await loadTakes(viewId);notice("录音已删除");
   }
@@ -801,20 +799,12 @@ function renderUnmatchedRecordings() {
   icons();
 }
 async function deleteUnmatchedRecording(id) {
-  const db=await state.db;
-  await new Promise((resolve,reject)=>{
-    const tx=db.transaction("recordings","readwrite"),store=tx.objectStore("recordings");
-    const request=store.get(id);let reason="删除失败，录音仍保留。";
-    request.onsuccess=()=>{
-      if(!request.result)return;
-      const take=recordingMetadata(request.result),item=state.lesson.items.find(i=>i.id===take.exercise);
+  await TextbookSync.deleteRecording(id,row=>{
+      const take=recordingMetadata(row),item=state.lesson.items.find(i=>i.id===take.exercise);
       // Recheck in the delete transaction in case a pending analysis just linked this take.
       if(!isLessonRecording(take)||recordingTurn(take,item)>=0) {
-        reason="录音的关联已更新，未删除。请刷新列表。";tx.abort();return;
+        throw new Error("录音的关联已更新，未删除。请刷新列表。");
       }
-      store.delete(id);
-    };
-    tx.oncomplete=resolve;tx.onerror=()=>reject(new Error(reason));tx.onabort=()=>reject(new Error(reason));
   });
 }
 async function openUnmatchedRecordings() {
@@ -828,16 +818,58 @@ async function openUnmatchedRecordings() {
 $("manageUnmatched").onclick=openUnmatchedRecordings;
 $("refreshUnmatched").onclick=openUnmatchedRecordings;
 $("closeUnmatched").onclick=()=>$("unmatchedDialog").close();
+let livePractice = null;
+const livePracticeButton = document.createElement("button");
+livePracticeButton.type = "button";
+livePracticeButton.className = "text-button analysis-entry";
+livePracticeButton.title = "实时跟读，不保存录音";
+livePracticeButton.innerHTML = '<i data-lucide="activity"></i><span>实时练习</span>';
+$("analysisDialog").querySelector(".analysis-status").prepend(livePracticeButton);
+const rerecordButton=document.createElement("button");
+rerecordButton.type="button";rerecordButton.className="text-button";
+rerecordButton.innerHTML='<i data-lucide="mic"></i><span>重新录音</span>';
+livePracticeButton.before(rerecordButton);
+const analysisMeter=document.createElement("meter");
+analysisMeter.min=-80;analysisMeter.max=0;analysisMeter.value=-80;
+analysisMeter.setAttribute("aria-label","录音实时音量");analysisMeter.hidden=true;
+rerecordButton.after(analysisMeter);
+rerecordButton.onclick=()=>{
+  if(state.recorder?.state==="recording"){state.recorder.stop();return;}
+  if(isRecording()||!state.analysisView)return;
+  state.analysisEpoch++;state.analysisView={...state.analysisView,rerecording:true};
+  $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-pause"},location.origin);
+  startRecording(state.analysisView);
+};
+livePracticeButton.hidden = Boolean(window.TextbookOffline);
+livePracticeButton.onclick = async () => {
+  const sentence = state.analysisView?.sentence || currentSentence();
+  if (!sentence || isRecording()) { notice("请先选择句子并结束录音。"); return; }
+  cancelPlayback(); stopPreview(); $("recordedAudio").pause();
+  $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-pause"},location.origin);
+  livePracticeButton.disabled = true;
+  try {
+    livePractice = await import("./textbook-live.mjs?v=3");
+    if (isRecording() || !$("analysisDialog").open) return;
+    await livePractice.open({text:sentence.text,
+      getReference:()=>audioFor({role:sentence.role,ja:sentence.text},sentence.settings)});
+  } catch(e) { notice("实时练习打开失败："+e.message); }
+  finally { updateAnalysisEntry(); }
+};
 function updateAnalysisEntry() {
+  rerecordButton.disabled=state.recordingPending||state.recordingSaving;
+  rerecordButton.querySelector("span").textContent=state.recorder?.state==="recording"?"停止并分析":"重新录音";
+  analysisMeter.hidden=!state.analysisView?.rerecording;
+  $("analysisFrame").inert=Boolean(state.analysisView?.rerecording&&isRecording());
+  $("retryAnalysis").disabled=isRecording();
+  livePracticeButton.disabled = !currentSentence() || isRecording();
   const take=selectedTake(),button=$("analyzeRecording");
   if(window.TextbookOffline){button.hidden=true;return;}
-  button.disabled=!currentSentence()||!take||isRecording();
-  button.title=isRecording()?"停止录音后查看分析":!take?"请先录制当前句，或选择已有录音":"分析当前句和所选录音";
+  button.disabled=!currentSentence()||isRecording();
+  button.title=isRecording()?"停止录音后查看分析":!take?"打开本句跟读练习":"分析当前句和所选录音";
   button.querySelector("span").textContent=take?.analysis?"查看分析":"跟读分析";
 }
 function analysisKey(sentence) {
-  return JSON.stringify(["textbook-analysis-v1",sentence.lessonId,sentence.index,sentence.role,sentence.text,
-    sentence.settings?settingsKey(sentence.settings):null]);
+  return JSON.stringify(["textbook-analysis-v7-portable",sentence.lessonId,sentence.index,sentence.role,sentence.text,sentence.settings]);
 }
 async function persistTakeAnalysis(take,sentence,analysis) {
   const db=await state.db;
@@ -846,8 +878,8 @@ async function persistTakeAnalysis(take,sentence,analysis) {
     const get=store.get(take.id);
     get.onsuccess=()=>{
       // A recording deleted while recognition was running must never be restored.
-      if(!get.result)return;
-      store.put({...get.result,sentence,analysis});saved=true;
+      if(!get.result||get.result.created!==take.created)return;
+      store.put({...get.result,sentence,analysis,...(take.referenceBlob?{referenceBlob:take.referenceBlob}:{})});saved=true;
     };
     tx.oncomplete=()=>resolve(saved);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
   });
@@ -856,20 +888,115 @@ function showAnalysisResult() {
   const view=state.analysisView;
   if(!$("analysisDialog").open||!view?.analysis||!state.analysisFrameReady)return;
   $("analysisFrame").hidden=false;
+  let reference=view.analysis.reference;
+  if(view.take.referenceBlob){
+    view.referenceURL||=URL.createObjectURL(view.take.referenceBlob);
+    reference={...reference,audio_url:view.referenceURL};
+  }
   $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-result",target:view.sentence.text,
-    recordingBlob:view.take.blob,reference:view.analysis.reference,result:view.analysis.result},location.origin);
+    recordingBlob:view.take.blob,reference,result:view.analysis.result,loops:view.analysis.loops||[]},location.origin);
 }
 window.addEventListener("message",event=>{
   if(event.origin!==location.origin||event.source!==$("analysisFrame").contentWindow||!$("analysisDialog").open)return;
+  if(event.data?.type==="textbook-analysis-stop-external-playback") {
+    cancelPlayback();stopPreview();$("recordedAudio").pause();return;
+  }
   if(event.data?.type==="textbook-analysis-ready") {state.analysisFrameReady=true;showAnalysisResult();}
+  if(event.data?.type==="textbook-analysis-manual-mora")saveManualMora(event.data);
+  if(event.data?.type==="textbook-analysis-manual-mora-group")saveManualMoraGroup(event.data);
+  if(event.data?.type==="textbook-analysis-loops"){
+    const view=state.analysisView;
+    if(!view?.analysis||!Array.isArray(event.data.loops))return;
+    const loops=event.data.loops.filter(r=>["referenceAudio","recordingAudio"].includes(r.id)&&Number.isFinite(r.start)&&Number.isFinite(r.end)&&r.start>=0&&r.end>r.start);
+    view.analysis.loops=loops;
+    persistTakeAnalysis(view.take,view.sentence,view.analysis).catch(e=>$("analysisStatus").textContent="循环区间未保存："+e.message);
+  }
 });
+async function saveManualMoraGroup({indices,start,end}) {
+  const view=state.analysisView,analysis=view?.analysis,pitch=analysis?.result?.pitch;
+  const duration=analysis?.result?.audio_data?.recording_raw?.duration;
+  const fail=message=>{
+    $("analysisStatus").textContent=message;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-error",group:true,message},location.origin);
+  };
+  if(!Array.isArray(indices)||indices.length<2||indices.length>100||
+     !indices.every((index,position)=>Number.isInteger(index)&&index===(indices[0]+position)&&
+       Number.isFinite(pitch?.moras?.[index]?.time_start)&&Number.isFinite(pitch?.moras?.[index]?.time_end))||
+     !Number.isFinite(duration)||!Number.isFinite(start)||!Number.isFinite(end)||
+     start<0||end-start<=indices.length*.016||end>duration+.01) {
+    fail("连续音拍或录音区间无效，请重新选择。");return;
+  }
+  const first=indices[0],last=indices.at(-1);
+  const outside=pitch.mora_spans.filter(span=>span.index<first||span.index>last);
+  if(outside.some(span=>start<span.recording_end&&end>span.recording_start)||
+     outside.some(span=>span.index<first&&span.recording_end>start)||
+     outside.some(span=>span.index>last&&span.recording_start<end)) {
+    fail("区间与所选音拍以外的对应重叠或顺序冲突。");return;
+  }
+  const updated=structuredClone(analysis),moras=updated.result.pitch.moras;
+  const weights=indices.map(index=>Math.max(.001,moras[index].time_end-moras[index].time_start));
+  const total=weights.reduce((sum,weight)=>sum+weight,0),extra=end-start-.016*indices.length;
+  let cursor=start,used=0;
+  const spans=indices.map((index,position)=>{
+    used+=.016+extra*weights[position]/total;
+    const next=position===indices.length-1?end:start+used,mora=moras[index];
+    mora.recording_match="manual";mora.recording_start=cursor;mora.recording_end=next;
+    const span={index,recording_start:cursor,recording_end:next,
+      reference_start:mora.time_start,reference_end:mora.time_end};
+    cursor=next;return span;
+  });
+  updated.result.pitch.mora_spans=[...outside,...spans].sort((a,b)=>a.recording_start-b.recording_start);
+  try {
+    if(!await persistTakeAnalysis(view.take,view.sentence,updated))throw new Error("录音已不存在");
+    view.analysis=updated;view.take.analysis=updated;
+    const stored=state.takes.find(t=>t.id===view.take.id);
+    if(stored)stored.analysis=updated;
+    $("analysisStatus").textContent=`${indices.length} 拍对应已保存在本机。`;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",indices,result:updated.result},location.origin);
+  } catch(e) { fail("连续音拍保存失败："+e.message); }
+}
+async function saveManualMora({index,start,end}) {
+  const view=state.analysisView,analysis=view?.analysis,pitch=analysis?.result?.pitch;
+  const mora=pitch?.moras?.[index],duration=analysis?.result?.audio_data?.recording_raw?.duration;
+  if(!Number.isInteger(index)||!mora||!Number.isFinite(start)||!Number.isFinite(end)||
+     !Number.isFinite(duration)||start<0||end<=start+.015||end>duration+.01||
+     !Number.isFinite(mora.time_start)||!Number.isFinite(mora.time_end))return;
+  const spans=pitch.mora_spans.filter(span=>span.index!==index);
+  const conflicts=spans.some(span=>start<span.recording_end&&end>span.recording_start)||
+    spans.some(span=>span.index<index&&span.recording_end>start)||
+    spans.some(span=>span.index>index&&span.recording_start<end);
+  if(conflicts) {
+    $("analysisStatus").textContent="此区间与其他音拍重叠或顺序冲突，请重新选择。";
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-error",index,message:"区间与其他音拍重叠或顺序冲突"},location.origin);
+    return;
+  }
+  const updated=structuredClone(analysis),updatedPitch=updated.result.pitch;
+  updatedPitch.moras[index].recording_match="manual";
+  updatedPitch.moras[index].recording_start=start;
+  updatedPitch.moras[index].recording_end=end;
+  updatedPitch.mora_spans=[...spans,{index,recording_start:start,recording_end:end,
+    reference_start:mora.time_start,reference_end:mora.time_end}].sort((a,b)=>a.recording_start-b.recording_start);
+  try {
+    if(!await persistTakeAnalysis(view.take,view.sentence,updated))throw new Error("录音已不存在");
+    view.analysis=updated;view.take.analysis=updated;
+    const stored=state.takes.find(t=>t.id===view.take.id);
+    if(stored)stored.analysis=updated;
+    $("analysisStatus").textContent="手动对应已保存在本机。";
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index,result:updated.result},location.origin);
+  } catch(e) {
+    $("analysisStatus").textContent="手动对应保存失败："+e.message;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-error",index,message:e.message},location.origin);
+  }
+}
 async function runSentenceAnalysis(force=false) {
-  const view=state.analysisView;if(!view)return;
+  const view=state.analysisView;if(!view?.take)return;
   const generation=++state.analysisEpoch,key=analysisKey(view.sentence),workKey=view.take.id+key;
   $("retryAnalysis").hidden=true;$("analysisFrame").hidden=true;
   $("analysisStatus").textContent="正在准备本句的标准配音…";
   try {
-    let analysis=!force&&view.take.analysis?.key===key?view.take.analysis:null;
+    const cached=view.take.analysis,oldKey=JSON.stringify(["textbook-analysis-v6-manual",view.sentence.lessonId,view.sentence.index,view.sentence.role,view.sentence.text]);
+    let analysis=!force&&!cached?.portableUnavailable&&(cached?.key===key||cached?.key===oldKey)&&
+      cached?.result?.analysis_version==="mora-alignment-v3-manual"?cached:null;
     let saved=true;
     if(!analysis) {
       if(!state.analysisWork.has(workKey)) {
@@ -884,7 +1011,11 @@ async function runSentenceAnalysis(force=false) {
           const response=await fetch("/api/transcribe",{method:"POST",body:form});
           const result=await response.json().catch(()=>({}));
           if(!response.ok)throw new Error(typeof result.detail==="string"?result.detail:"本机分析失败，请重试。");
+          if(result.analysis_version!=="mora-alignment-v3-manual")throw new Error("本地服务还是旧版本。请先退出并重新打开日语跟读 App，再分析这条录音。");
+          if(result.audio_data?.recording_raw)delete result.audio_data.recording;
           const analysis={key,reference,result,created:Date.now()};
+          const referenceResponse=await fetch(reference.audio_url);
+          if(referenceResponse.ok)view.take.referenceBlob=await referenceResponse.blob();
           let saved=false;try{saved=await persistTakeAnalysis(view.take,view.sentence,analysis);}catch{}
           if(saved) {
             const stored=state.takes.find(t=>t.id===view.take.id);
@@ -910,10 +1041,10 @@ async function runSentenceAnalysis(force=false) {
   }
 }
 $("analyzeRecording").onclick=()=>{
-  const take=selectedTake(),current=currentSentence();if(!take||!current||isRecording())return;
-  if(!take.sentence&&!confirm("这条旧录音没有句子关联信息。确认它是当前第 "+(current.index+1)+" 句的跟读录音吗？\n"+current.text))return;
-  if(take.sentence&&take.sentence.text!==current.text&&!confirm("这条录音对应修改前的文本，将按下面的原句分析。继续吗？\n"+take.sentence.text))return;
-  const sentence={...(take.sentence||current)};
+  const take=selectedTake(),current=currentSentence();if(!current||isRecording())return;
+  if(take&&!take.sentence&&!confirm("这条旧录音没有句子关联信息。确认它是当前第 "+(current.index+1)+" 句的跟读录音吗？\n"+current.text))return;
+  if(take?.sentence&&take.sentence.text!==current.text&&!confirm("这条录音对应修改前的文本，将按下面的原句分析。继续吗？\n"+take.sentence.text))return;
+  const sentence={...(take?.sentence||current)};
   if(!sentence.settings)sentence.settings=current.settings;
   cancelPlayback();stopPreview();$("recordedAudio").pause();
   state.analysisView={take,sentence};state.analysisFrameReady=false;
@@ -922,12 +1053,17 @@ $("analyzeRecording").onclick=()=>{
   $("analysisSentence").textContent=sentence.text;
   const voice=state.voices.find(v=>v.style_id===sentence.settings?.style_id);
   $("analysisReference").textContent="标准配音："+(voice?voice.speaker_name+" · "+styleLabel(voice.style_name):"原角色音色")+
-    " · "+new Date(take.created).toLocaleString("zh-CN")+" 的录音";
-  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=sentence-analysis-1";
-  $("analysisDialog").showModal();runSentenceAnalysis();
+    (take?" · "+new Date(take.created).toLocaleString("zh-CN")+" 的录音":"");
+  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=sync-2";
+  $("analysisDialog").showModal();
+  if(take)runSentenceAnalysis();else {$("analysisStatus").textContent="本句暂无录音";$("retryAnalysis").hidden=true;}
+  updateAnalysisEntry();
 };
 $("retryAnalysis").onclick=()=>runSentenceAnalysis(true);
 function closeSentenceAnalysis() {
+  if(state.analysisView?.referenceURL)URL.revokeObjectURL(state.analysisView.referenceURL);
+  if(state.analysisView?.rerecording&&isRecording()) {$("analysisStatus").textContent="请先停止录音，保存后再关闭。";return;}
+  livePractice?.close();
   state.analysisEpoch++;state.analysisView=null;state.analysisFrameReady=false;
   $("analysisFrame").src="about:blank";$("analysisFrame").hidden=true;
   $("analysisDialog").close();
@@ -938,6 +1074,7 @@ $("analysisDialog").addEventListener("close",()=>{
   if(!$("analysisDialog").open&&state.analysisView)closeSentenceAnalysis();
 });
 function setRecordingMeter(status,level=0,decibels=-80) {
+  analysisMeter.value=decibels;
   const labels={idle:"未录音",silent:"等待声音",quiet:"声音偏小",normal:"有声音",loud:"接近峰值",unavailable:"音量不可用"};
   $("recordMeter").dataset.state=status;$("recordMeterText").textContent=labels[status];
   $("recordMeterLevel").style.transform=`scaleX(${level/100})`;
@@ -990,10 +1127,11 @@ function startRecordingMeter(stream,recorder) {
     meter.frame=requestAnimationFrame(update);
   } catch {unavailable();}
 }
-async function startRecording() {
+async function startRecording(analysisView=null) {
+  const report=message=>{notice(message);if(analysisView&&state.analysisView===analysisView)$("analysisStatus").textContent=message;};
   if(!state.item)return;
-  const sentence=currentSentence();if(!sentence){notice("请先选择可跟读的句子。");return;}
-  if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){notice("当前浏览器不支持录音，请用本机浏览器打开。");return;}
+  const sentence=analysisView?.sentence||currentSentence();if(!sentence){notice("请先选择可跟读的句子。");return;}
+  if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){if(analysisView)analysisView.rerecording=false;report("当前浏览器不支持录音，请用本机浏览器打开。");updateAnalysisEntry();return;}
   cancelPlayback();$("recordedAudio").pause();state.recordingPending=true;$("record").disabled=true;updateAnalysisEntry();
   const viewId=state.item.id,sources=sentenceSources(state.item,state.turn),exercise=sources[0].id;
   let desktopTicket;
@@ -1012,63 +1150,61 @@ async function startRecording() {
       $("record").classList.remove("is-recording");setIcon($("record"),"mic","开始录音");
       $("record").disabled=false;state.recordingPending=false;
       const blob=new Blob(chunks,{type:recorder.mimeType||chunks[0]?.type||"audio/webm"});
-      if(!blob.size){notice("录音为空，请重试。");updateAnalysisEntry();await window.desktopSession?.end(desktopTicket);return;}
-      state.recordingSaving=true;$("record").disabled=true;
+      if(!blob.size){if(analysisView)analysisView.rerecording=false;report("录音为空，请重试。");updateAnalysisEntry();await window.desktopSession?.end(desktopTicket);return;}
+      state.recordingSaving=true;$("record").disabled=true;updateAnalysisEntry();
+      report("正在保存录音…");
       try {
         const id=crypto.randomUUID();
         const take={id,exercise,sentence,created:Date.now(),blob};
-        if(window.TextbookOffline){
-          const db=await state.db;
-          await new Promise((resolve,reject)=>{
-            const tx=db.transaction("recordings","readwrite"),store=tx.objectStore("recordings");
-            let remaining=sources.length;const previous=[];
-            for(const source of sources) {
-              const request=store.index("exercise").getAll(source.id);
-              request.onsuccess=()=>{
-                previous.push(...request.result);if(--remaining)return;
-                const matches=previous.filter(old=>old.sentence&&takeMatches(old,sentence)).sort((a,b)=>b.created-a.created);
-                // Keep the original identity so desktop round-trip sync replaces the same take.
-                if(matches.length){take.id=matches[0].id;take.exercise=matches[0].exercise;}
-                for(const old of matches)if(old.id!==take.id)store.delete(old.id);
-                store.put(take);
-              };
-            }
-            tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error("录音未保存"));
-          });
-        }else await dbRequest("readwrite",store=>store.put(take));
+        const previous=[];
+        for(const source of sources)previous.push(...await dbRequest("readonly",store=>store.index("exercise").getAll(source.id)));
+        const matches=previous.filter(old=>old.sentence&&takeMatches(old,sentence)).sort((a,b)=>b.created-a.created);
+        await TextbookSync.replaceRecording(take,matches);
         indexRecording(take);updateRecordingProgress();
         await loadTakes(viewId);
         if(state.item.id===viewId&&takeMatches({sentence})){$("takes").value=take.id;selectTake();}
-        notice(window.TextbookOffline?"本句录音已保存，重录会替换。":"第 "+(sentence.index+1)+" 句录音已保存，可查看跟读分析");
+        notice("本句录音已保存，重录会替换；旧录音保留在本机备份。");
+        if(analysisView&&state.analysisView===analysisView) {
+          analysisView.take=take;analysisView.analysis=null;
+          $("analysisReference").textContent="新录音 · "+new Date(take.created).toLocaleString("zh-CN");
+          runSentenceAnalysis(true);
+        }
       } catch {
         const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;
         a.download="未保存的录音."+(blob.type.includes("mp4")?"m4a":"webm");a.click();
-        setTimeout(()=>URL.revokeObjectURL(url),60000);notice("本地保存失败，已尝试下载备份，请确认下载成功。");
+        setTimeout(()=>URL.revokeObjectURL(url),60000);report("本地保存失败，已尝试下载备份，请确认下载成功。");
       } finally {
         state.recordingSaving=false;$("record").disabled=false;
+        if(analysisView)analysisView.rerecording=false;
         await window.desktopSession?.end(desktopTicket);
       }
       updateAnalysisEntry();
     };
     recorder.onerror=()=>{
+      if(analysisView)analysisView.rerecording=false;
       window.desktopSession?.end(desktopTicket);
       stopRecordingMeter();
       stream.getTracks().forEach(t=>t.stop());clearInterval(state.recordTimer);
       state.recorder=null;state.stream=null;state.recordingPending=false;
       $("record").disabled=false;$("record").classList.remove("is-recording");setIcon($("record"),"mic","开始录音");
-      notice("录音中断，请重试。");
+      report("录音中断，请重试。");
       updateAnalysisEntry();
     };
     recorder.start();state.recordingPending=false;$("record").disabled=false;$("record").classList.add("is-recording");
     startRecordingMeter(stream,recorder);
     setIcon($("record"),"square","停止录音");$("recordTime").textContent="0:00";
-    state.recordTimer=setInterval(()=>{$("recordTime").textContent=time((Date.now()-started)/1000);},250);
-    notice("正在录音…");
+    updateAnalysisEntry();
+    state.recordTimer=setInterval(()=>{
+      const elapsed=time((Date.now()-started)/1000);$("recordTime").textContent=elapsed;
+      if(analysisView&&state.analysisView===analysisView)$("analysisStatus").textContent="正在录音 · "+elapsed;
+    },250);
+    report("正在录音…");
   } catch(e) {
+    if(analysisView)analysisView.rerecording=false;
     await window.desktopSession?.end(desktopTicket);
     stopRecordingMeter();
     state.stream?.getTracks().forEach(t=>t.stop());state.stream=null;state.recordingPending=false;$("record").disabled=false;
-    notice(e.name==="NotAllowedError"?"麦克风权限未获允许，请在浏览器设置中允许录音。":"无法开始录音："+e.message);
+    report(e.name==="NotAllowedError"?"麦克风权限未获允许，请在浏览器设置中允许录音。":"无法开始录音："+e.message);
     updateAnalysisEntry();
   }
 }

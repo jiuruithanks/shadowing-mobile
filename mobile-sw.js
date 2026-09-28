@@ -1,7 +1,7 @@
-const CACHE_NAME = "tokyo-shadowing-mobile-v25-course-tags";
+const CACHE_NAME = "tokyo-shadowing-mobile-v26-practice-sync";
 const BASE_URL = new URL("./", self.location.href);
 const APP_SHELL_PATHS = [
-  "textbook-phone-ui.js?v=1",
+  "textbook-phone-ui.js?v=sync-2",
   "mobile.html",
   "mobile.css?v=20260916-02",
   "mobile-package.js?v=20260915-02",
@@ -14,15 +14,17 @@ const APP_SHELL_PATHS = [
   "manifest.webmanifest",
   "favicon.svg",
   "mobile-textbook-library.html",
-  "mobile-textbook-library.js?v=1",
+  "mobile-textbook-library.js?v=sync-2",
   "mobile-textbook.html",
   "mobile-textbook-marks.html",
   "mobile-textbook-tags-manage.html",
   "mobile-package.js?v=20260924-01",
-  "textbook-package.js?v=1",
+  "textbook-package.js?v=sync-2",
+  "textbook-sync.js?v=sync-2",
+  "textbook-sync.css?v=sync-2",
   "textbook-offline.js?v=1",
-  "textbook-transfer.js?v=1",
-  "textbook.js?v=mobile-1",
+  "textbook-transfer.js?v=sync-2",
+  "textbook.js?v=sync-2",
   "textbook-tags.js?v=mobile-1",
   "textbook-marks.js?v=mobile-1",
   "textbook-marked-practice.js?v=mobile-1",
