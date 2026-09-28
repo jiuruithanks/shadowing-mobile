@@ -17,11 +17,14 @@ window.TextbookTransfer=(()=>{
   async function persistExport(blob,name,progress=()=>{}){
     if(offline()){
       const file=new File([blob],name,{type:blob.type||"application/zip"});
-      const share=confirm("文件已准备好。使用系统分享保存到“文件”或发送到电脑？取消则直接下载。");
-      if(share&&navigator.canShare?.({files:[file]})){
-        try{await navigator.share({files:[file],title:name});return;}catch(error){if(error.name==="AbortError")return;}
-      }
-      TextbookPackage.download(blob,name);return;
+      if(!navigator.canShare?.({files:[file]})){TextbookPackage.download(blob,name);return;}
+      // Sharing requires a fresh tap after asynchronous packing, especially in Safari.
+      await new Promise(resolve=>{
+        const node=dialog("保存导出包"),share=el("button","系统分享"),download=el("button","下载文件"),status=el("p",name);
+        share.onclick=async()=>{share.disabled=true;download.disabled=true;try{await navigator.share({files:[file],title:name});node.close();}
+          catch(error){status.textContent=error.name==="AbortError"?"未分享，可选择下载。":error.message;}finally{share.disabled=false;download.disabled=false;}};
+        download.onclick=()=>{TextbookPackage.download(blob,name);node.close();};node.append(status,share,download);node.addEventListener("close",()=>resolve());node.showModal();
+      });return;
     }
     progress("正在保存到电脑导出目录…");
     const result=await new Promise((resolve,reject)=>{
