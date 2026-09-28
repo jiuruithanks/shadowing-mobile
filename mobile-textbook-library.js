@@ -17,20 +17,10 @@
     }
     window.lucide?.createIcons();
   }
-  $("importCourse").onclick=()=>$("courseFile").click();
-  const sync=el("details"),summary=el("summary","练习同步与备份"),exportButton=el("button","导出练习包"),importButton=el("button","导入练习包"),backups=el("button","本机数据备份");
-  exportButton.onclick=()=>TextbookTransfer.exportPractice().catch(e=>$("libraryStatus").textContent=e.message);
-  importButton.onclick=()=>{try{TextbookTransfer.chooseImport();}catch(e){$("libraryStatus").textContent=e.message;}};
-  backups.onclick=()=>TextbookTransfer.backupsDialog().catch(e=>$("libraryStatus").textContent=e.message);
-  sync.append(summary,exportButton,importButton,backups);$("courseLibrary").before(sync);
-  $("courseFile").onchange=async()=>{
-    const file=$("courseFile").files[0];if(!file)return;$("importCourse").disabled=true;
-    try{
-      const row=await TextbookPackage.importCourse(file,(n,total,phase)=>$("libraryStatus").textContent=phase||`正在校验 ${n}/${total}`);
-      $("libraryStatus").textContent=row?(row.tagWarning||(row.tagsImported?"课程和标签已保存到本机。":"课程已保存到本机；此包未包含标签。")):"未更新课程。";await render();
-    }catch(e){$("libraryStatus").textContent=e.name==="QuotaExceededError"?"存储空间不足，原课程未改动。":e.message;}
-    finally{$("importCourse").disabled=false;$("courseFile").value="";}
-  };
+  $("importCourse").onclick=()=>TextbookTransfer.openHub("material").catch(e=>$("libraryStatus").textContent=e.message);
+  window.addEventListener("textbook-course-imported",event=>{
+    $("libraryStatus").textContent=event.detail.tagWarning||"教材已添加，可以离线练习。";render().catch(e=>$("libraryStatus").textContent=e.message);
+  });
   render().catch(e=>$("libraryStatus").textContent=e.message);
   if("serviceWorker"in navigator){
     navigator.serviceWorker.register("mobile-sw.js").then(()=>navigator.serviceWorker.ready).then(()=>{

@@ -13,4 +13,40 @@
 .sync-dialog select { max-width: 100%; min-height: 44px; }
 .sync-dialog audio { display: block; width: 100%; height: 44px; margin: 8px 0; }
 .sync-dialog small, .sync-dialog a { overflow-wrap: anywhere; }
-@media (max-width: 640px) { .sync-dialog { padding: 16px; } }
+.transfer-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: white; color: var(--green); border: 1px solid var(--line); border-radius: 5px; min-height: 44px; padding: 8px 12px; font: inherit; cursor: pointer; }
+.transfer-action svg, .sync-dialog .icon-button svg { width: 19px; height: 19px; flex: 0 0 19px; }
+.app-header nav { align-items: center; }
+.app-header #textbookTransfer { min-height: 36px; font-size: 13px; padding: 6px 10px; }
+.sync-dialog .transfer-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
+.sync-dialog .transfer-tabs button { border: 0; border-radius: 0; background: transparent; color: var(--muted, #66746d); font-size: 14px; margin: 0; border-bottom: 3px solid transparent; padding: 10px 4px; }
+.sync-dialog .transfer-tabs button[aria-selected="true"] { color: var(--green); border-bottom-color: var(--green); font-weight: 700; }
+.sync-dialog .transfer-content { min-width: 0; }
+.sync-dialog .transfer-content > p { margin: 16px 0; line-height: 1.65; }
+.sync-dialog [role="status"]:empty { display: none; }
+.sync-dialog .transfer-section { margin-top: 16px; }
+.sync-dialog .transfer-section label { display: grid; gap: 8px; margin: 12px 0; font-size: 13px; color: #66746d; }
+.sync-dialog .transfer-section select { width: 100%; font-size: 15px; color: var(--ink, #202925); }
+.sync-dialog .transfer-section > .transfer-action { margin: 4px 0; }
+.sync-dialog details { margin: 12px 0; font-size: 13px; }
+.sync-dialog summary { cursor: pointer; min-height: 32px; line-height: 1.6; padding: 6px 0; }
+.sync-dialog .transfer-history { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 20px; }
+.sync-dialog .transfer-history > summary { font-size: 15px; font-weight: 600; }
+.sync-dialog .transfer-file { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.sync-dialog .transfer-file > div:first-child { min-width: 0; }
+.sync-dialog .transfer-file h3 { margin: 0 0 6px; }
+.sync-dialog .transfer-file p { margin: 0; color: #66746d; }
+.sync-dialog .transfer-file small { display: block; margin-top: 6px; color: #66746d; font-size: 12px; }
+.sync-dialog .transfer-file a { display: block; font-size: 14px; color: var(--green); }
+.sync-dialog .transfer-row-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.sync-dialog .transfer-file .transfer-row-actions { flex-wrap: nowrap; flex-shrink: 0; }
+.sync-dialog .transfer-file .icon-button { flex-shrink: 0; margin: 0; }
+.sync-dialog .transfer-path { font-size: 12px; color: #66746d; }
+.sync-dialog .transfer-library { display: inline-block; color: var(--green); font-size: 14px; margin: 12px; }
+@media (max-width: 640px) {
+  .transfer-dialog.sync-dialog { padding: 16px; max-height: calc(100dvh - 20px); }
+  .sync-dialog .transfer-tabs button { font-size: 14px; }
+  .sync-dialog .transfer-content .transfer-section > .transfer-action { width: 100%; }
+  .sync-dialog .transfer-row-actions > .transfer-action { flex: 1; }
+  .sync-dialog .transfer-file { align-items: flex-start; }
+  .sync-dialog .transfer-file .icon-button { width: 40px; height: 40px; }
+}
