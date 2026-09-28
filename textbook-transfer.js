@@ -6,7 +6,7 @@ window.TextbookTransfer=(()=>{
   const context=()=>typeof state==="object"?state:null;
   const offline=()=>Boolean(window.TextbookOffline)||location.pathname.includes("mobile-textbook");
   const report=text=>{if(typeof notice==="function")notice(text);else{const node=document.getElementById("libraryStatus");if(node)node.textContent=text;}};
-  const checkIdle=()=>{if(typeof isRecording==="function"&&isRecording())throw new Error("请先结束录音并保存。");if(busy)throw new Error("正在处理，请稍候。");};
+  const checkIdle=()=>{if(typeof isRecording==="function"&&isRecording())throw new Error("请先结束录音并保存。");if(context()?.analysisWork?.size)throw new Error("请等本句分析保存完成后再同步。");if(busy)throw new Error("正在处理，请稍候。");};
   const noteKeys=lesson=>lesson.items.flatMap(i=>["note:"+i.id,"answer:"+i.id,"done:"+i.id,...i.turns.map((_,n)=>"turnDone:"+i.id+":"+n)]);
   function snapshot(lessons){
     const keys=lessons.flatMap(noteKeys),values={};
@@ -155,10 +155,13 @@ window.TextbookTransfer=(()=>{
   }
   async function importPayload(payload,files,title){
     const plan=await TextbookSync.prepare(payload,files),choices=await confirmPlan(plan,title);if(!choices)return null;
+    if(context()?.lesson){cancelPlayback();stopPreview();clearAudio();$("recordedAudio").pause();if($("analysisDialog").open)closeSentenceAnalysis();livePractice?.close();}
     const result=await TextbookSync.apply(plan,choices);
     if(context()?.lesson){
+      for(const lesson of state.lessons)lesson.items.forEach(readPersonal);
+      if(state.turn>=itemTurns().length)state.turn=0;
       await loadRecordingIndex();if(state.item)await loadTakes(state.item.id);renderNav();renderTurns();
-      if(state.item)$("noteText").value=read("note:"+state.item.id);
+      if(state.item){$("noteText").value=read("note:"+state.item.id);$("personalText").value=read("answer:"+state.item.id);}
     }
     report(`同步完成：更新 ${result.updated} 项，删除 ${result.deleted} 项，保持 ${result.skipped} 项。替换前的数据已保留在本机备份。`);return result;
   }

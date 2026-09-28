@@ -215,7 +215,9 @@ window.TextbookSync=(()=>{
       values[PREFIX+"sentenceTags:v1"]=JSON.stringify(tags);
       // Commit audio and a replayable localStorage journal together; interrupted imports resume on the next open.
       await transact(["recordings","syncState"],"readwrite",tx=>{
-        const store=tx.objectStore("recordings");store.clear();for(const row of rows.values())store.put(row);
+        const store=tx.objectStore("recordings"),previous=new Map(fresh.rows.map(row=>[row.id,row]));
+        for(const row of fresh.rows)if(!rows.has(row.id))store.delete(row.id);
+        for(const row of rows.values())if(previous.get(row.id)!==row)store.put(row);
         tx.objectStore("syncState").put({id:"ledger",docs});tx.objectStore("syncState").put({id:"pending",values});
       });
       await recover();return {updated:chosen.length,skipped:plan.actions.length-chosen.length,deleted:chosen.filter(a=>a.incoming.value===null).length};
