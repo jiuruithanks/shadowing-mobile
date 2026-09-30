@@ -47,7 +47,7 @@ window.TextbookTransfer=(()=>{
     progress("已保存："+result.path);return result;
   }
   async function packPractice(scope="all",progress=report,backupRow=null){
-    const data=backupRow?null:await TextbookSync.ready(),docs={},files=new Map(),takes=[],archiveTakes=[];
+    const data=backupRow?null:await TextbookSync.ready(),docs={},files=new Map(),takes=[],archiveTakes=[],calibrations=[];
     const source=backupRow?.rows||data.rows,started=Date.now();
     const current=new Map();for(const take of source.filter(t=>t.blob instanceof Blob).sort((a,b)=>a.created-b.created))current.set(TextbookSync.sentenceKey(take),take);
     const ledger=backupRow?{}:data.docs;
@@ -97,7 +97,13 @@ window.TextbookTransfer=(()=>{
       archiveTakes.push({id:original.id,exercise:original.exercise,sentence:original.sentence||null,created:original.created,
         analysis:TextbookSync.cleanAnalysis(original.analysis),path});
     }
-    return TextbookPackage.pack(TextbookPackage.RETURN,{takes,archiveTakes,sync:{version:2,docs},scope,created:Date.now()},files,
+    for(const template of backupRow?.calibrations||data?.calibrations||[]){
+      const value=template.value;if(scope!=="all"&&value.lessonId!==scope)continue;
+      const path="calibrations/"+value.audioHash;files.set(path,template.blob);calibrations.push({value,path});
+      const id="calibration:"+value.key;
+      if(!docs[id])docs[id]={kind:"calibration",key:value.key,lessonId:value.lessonId,value,rev:"backup:"+await TextbookSync.hash([id,value]),ancestors:[],updated:Date.now()};
+    }
+    return TextbookPackage.pack(TextbookPackage.RETURN,{takes,archiveTakes,calibrations,sync:{version:3,docs},scope,created:Date.now()},files,
       (n,total)=>progress(`校验打包 ${n}/${total}`));
   }
   async function exportPractice(scope=null){
@@ -142,13 +148,14 @@ window.TextbookTransfer=(()=>{
     if(doc.kind==="take")return doc.value.sentence?.text||"未对应录音";
     if(doc.kind==="field")return doc.value;
     if(doc.kind==="tag")return doc.value.name;
+    if(doc.kind==="calibration")return (doc.value.track==="reference"?"标准音校准":"录音校准样本")+" · "+doc.value.text;
     return (doc.value.text||"")+" · "+doc.value.tagIds.length+" 个标记";
   }
   async function confirmPlan(plan,title="确认导入练习记录"){
     return new Promise(resolve=>{
       const node=dialog(title),changed=plan.actions.filter(a=>a.status==="incoming"),conflicts=plan.actions.filter(a=>a.status==="conflict");
       const counts=kind=>plan.actions.filter(a=>a.incoming.kind===kind&&a.incoming.value).length;
-      node.append(el("p",`录音 ${counts("take")} · 笔记与回答 ${counts("field")} · 标签 ${counts("tag")} · 标记句子 ${counts("labels")}`),
+      node.append(el("p",`录音 ${counts("take")} · 笔记与回答 ${counts("field")} · 标签 ${counts("tag")} · 标记句子 ${counts("labels")} · 音拍校准 ${counts("calibration")}`),
         el("p",`更新 ${changed.length} 项 · 删除 ${changed.filter(a=>a.incoming.value===null).length} 项 · 冲突 ${conflicts.length} 项 · 其余保持不变`));
       const recordings=plan.actions.filter(a=>a.incoming.kind==="take"&&a.incoming.value).map(a=>a.incoming.value);
       node.append(el("p",`已存分析 ${recordings.filter(t=>t.analysis).length} 份 · 未对应录音 ${recordings.filter(t=>!t.sentence).length} 条 · 历史录音 ${plan.archive.length} 条`));
@@ -156,7 +163,7 @@ window.TextbookTransfer=(()=>{
       for(const action of changed)list.append(el("p",`${action.incoming.value===null?"删除":"更新"} · ${action.incoming.lessonId.slice(-2)||"通用"} · ${describe(action.incoming.value===null?action.local:action.incoming).slice(0,120)}`));node.append(list);
       const choices={},start=el("button","确认导入");start.id="confirmPracticeImport";
       for(const action of conflicts){
-        const section=el("section"),heading=el("h3",`${action.incoming.lessonId?"第 "+Number(action.incoming.lessonId.slice(-2))+" 课":"通用"} · ${action.incoming.kind==="take"?"录音":action.incoming.kind==="field"?action.incoming.key:"标签"}`);
+        const section=el("section"),heading=el("h3",`${action.incoming.lessonId?"第 "+Number(action.incoming.lessonId.slice(-2))+" 课":"通用"} · ${action.incoming.kind==="take"?"录音":action.incoming.kind==="field"?action.incoming.key:action.incoming.kind==="calibration"?"音拍校准":"标签"}`);
         const select=el("select");select.setAttribute("aria-label","冲突处理方式");select.append(new Option("请选择保留方式",""),new Option("保留本机","local"),new Option("使用包内版本","incoming"));
         select.onchange=()=>{choices[action.id]=select.value;start.disabled=conflicts.some(a=>!choices[a.id]);};
         section.append(heading,el("p","本机："+describe(action.local)),el("p","包内："+describe(action.incoming)),select);
@@ -200,6 +207,7 @@ window.TextbookTransfer=(()=>{
       if(scope!=="all"){
         payload.takes=payload.takes.filter(t=>TextbookSync.courseId(t)===scope);
         if(payload.archiveTakes)payload.archiveTakes=payload.archiveTakes.filter(t=>TextbookSync.courseId(t)===scope);
+        if(payload.calibrations)payload.calibrations=payload.calibrations.filter(t=>t.value.lessonId===scope);
         if(payload.sync)payload.sync.docs=Object.fromEntries(Object.entries(payload.sync.docs).filter(([,doc])=>!doc.lessonId||doc.lessonId===scope));
         if(payload.study){
           payload.study.values=Object.fromEntries(Object.entries(payload.study.values||{}).filter(([key])=>scope.endsWith(/^l(\d{2})-/.exec(key.split(":")[1])?.[1]||"01")));

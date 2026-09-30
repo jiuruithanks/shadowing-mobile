@@ -35,6 +35,15 @@ window.TextbookSync=(()=>{
   }
   const get=(store,key)=>transact([store],"readonly",(tx,out)=>{const r=tx.objectStore(store).get(key);r.onsuccess=()=>out(r.result);});
   const all=store=>transact([store],"readonly",(tx,out)=>{const r=tx.objectStore(store).getAll();r.onsuccess=()=>out(r.result);});
+  const calibrations=async()=>(await all("syncState")).filter(row=>row.id.startsWith("calibration:")).map(row=>row.template);
+  async function saveCalibration(template,replace=true){
+    validateCalibration(template.value);
+    if(!(template.blob instanceof Blob)||await ShadowingPackage.sha256Blob(template.blob)!==template.value.audioHash)throw new Error("校准样本音频校验失败");
+    return transact(["syncState"],"readwrite",tx=>{
+      const store=tx.objectStore("syncState"),id="calibration:"+template.value.key,r=store.get(id);
+      r.onsuccess=()=>{if(replace||!r.result)store.put({id,template});};
+    });
+  }
   const lock=action=>navigator.locks?navigator.locks.request("textbook-practice-sync",action):action();
   function localSnapshot(){
     const values={};for(let n=0;n<localStorage.length;n++){const key=localStorage.key(n);if(key?.startsWith(PREFIX))values[key]=localStorage.getItem(key);}
@@ -54,7 +63,7 @@ window.TextbookSync=(()=>{
   }
   async function backup(reason,onlyRows=null){
     await recover();const rows=onlyRows||await all("recordings"),values=localSnapshot(),ledger=await get("syncState","ledger");
-    const row={id:Date.now()+"-"+crypto.randomUUID(),created:Date.now(),reason,rows,values,ledger};
+    const row={id:Date.now()+"-"+crypto.randomUUID(),created:Date.now(),reason,rows,values,ledger,calibrations:await calibrations()};
     await transact(["syncBackups"],"readwrite",tx=>tx.objectStore("syncBackups").put(row));return row;
   }
   async function ensure(){
@@ -97,6 +106,8 @@ window.TextbookSync=(()=>{
     const rows=await all("recordings"),bySentence=new Map();
     for(const row of rows.filter(r=>r.blob instanceof Blob).sort((a,b)=>a.created-b.created))bySentence.set(sentenceKey(row),row);
     for(const [key,take] of bySentence)put("take",key,courseId(take),await takeValue(take));
+    const templates=await calibrations();
+    for(const template of templates)put("calibration",template.value.key,template.value.lessonId,template.value);
     for(const [id,old] of Object.entries(docs))if(!observed[id])observed[id]={kind:old.kind,key:old.key,lessonId:old.lessonId,value:null};
     for(const [id,value] of Object.entries(observed)){
       const old=docs[id];if(old&&json(old.value)===json(value.value))continue;
@@ -104,7 +115,7 @@ window.TextbookSync=(()=>{
       docs[id]={...value,rev,ancestors:old?[...new Set([...old.ancestors,old.rev,...(old.aliases||[])])]:[],updated:Date.now()};
     }
     await transact(["syncState"],"readwrite",tx=>tx.objectStore("syncState").put({id:"ledger",docs}));
-    return {docs,rows,values:localSnapshot()};
+    return {docs,rows,values:localSnapshot(),calibrations:templates};
   }
   function relation(local,incoming){
     if(!local)return "incoming";
@@ -116,11 +127,12 @@ window.TextbookSync=(()=>{
     return "conflict";
   }
   function validateDoc(doc){
-    if(!doc||!["take","field","tag","labels"].includes(doc.kind)||typeof doc.key!=="string"||doc.key.length>12000||
+    if(!doc||!["take","field","tag","labels","calibration"].includes(doc.kind)||typeof doc.key!=="string"||doc.key.length>12000||
       typeof doc.lessonId!=="string"||!/^$|^dekiru-2e-intermediate-\d{2}$/.test(doc.lessonId)||
       typeof doc.rev!=="string"||!Array.isArray(doc.ancestors)||doc.ancestors.length>20000||!doc.ancestors.every(x=>typeof x==="string")||
       doc.aliases&&(!Array.isArray(doc.aliases)||doc.aliases.length>20000||!doc.aliases.every(x=>typeof x==="string")))throw new Error("同步记录格式无效");
     const value=doc.value;if(value===null)return;
+    if(doc.kind==="calibration"){validateCalibration(value);if(value.key!==doc.key||value.lessonId!==doc.lessonId)throw new Error("校准样本编号不符");}
     if(doc.kind==="field"&&(!/^(note|answer|importedVariants:(?:note|answer)):/.test(doc.key)||typeof value!=="string"||value.length>100000))throw new Error("笔记或回答无效");
     if(doc.kind==="tag"&&(value.id!==doc.key||typeof value.name!=="string"||!value.name.trim()||value.name.length>40))throw new Error("标记名称无效");
     if(doc.kind==="labels"&&(!Array.isArray(value.tagIds)||!value.tagIds.every(id=>typeof id==="string")||value.key!==doc.key||value.lessonId!==doc.lessonId||
@@ -128,6 +140,14 @@ window.TextbookSync=(()=>{
     if(doc.kind==="take"&&(typeof value.id!=="string"||typeof value.exercise!=="string"||!Number.isFinite(value.created)||
       !/^[a-f0-9]{64}$/.test(value.contentHash)||sentenceKey(value)!==doc.key||courseId(value)!==doc.lessonId||
       value.sentence&&(!Number.isInteger(value.sentence.index)||value.sentence.index<0||typeof value.sentence.text!=="string"||typeof value.sentence.role!=="string")))throw new Error("录音清单无效");
+  }
+  function validateCalibration(value){
+    if(!value||!["reference","recording"].includes(value.track)||!/^dekiru-2e-intermediate-\d{2}$/.test(value.lessonId)||
+      typeof value.text!=="string"||!value.text||value.text.length>5000||!Number.isFinite(value.duration)||value.duration<=0||value.duration>120||
+      !/^[a-f0-9]{64}$/.test(value.audioHash)||!Array.isArray(value.moras)||!value.moras.length||value.moras.length>1000||
+      !Number.isFinite(value.created)||value.key!==JSON.stringify([value.track,value.audioHash,value.text]))throw new Error("校准样本格式无效");
+    for(const [index,m] of value.moras.entries())if(m.index!==index||typeof m.text!=="string"||typeof m.confirmed!=="boolean"||typeof m.discarded!=="boolean"||
+      m.confirmed&&(!Number.isFinite(m.start)||!Number.isFinite(m.end)||m.start<0||m.end<=m.start||m.end>value.duration+.01))throw new Error("校准音拍区间无效");
   }
   async function legacyDocs(payload,takes){
     const docs={};const add=async(kind,key,lessonId,value)=>{
@@ -140,7 +160,13 @@ window.TextbookSync=(()=>{
     return docs;
   }
   async function prepare(payload,files){
-    const takes=[],archive=[];
+    const takes=[],archive=[],byCalibration=new Map();
+    if(payload.calibrations&&!Array.isArray(payload.calibrations)||payload.calibrations?.length>10000)throw new Error("校准样本清单无效");
+    for(const entry of payload.calibrations||[]){
+      validateCalibration(entry.value);const blob=files.get(entry.path);
+      if(byCalibration.has(entry.value.key)||!blob?.type.startsWith("audio/")||await ShadowingPackage.sha256Blob(blob)!==entry.value.audioHash)throw new Error("校准样本音频缺失或校验失败");
+      byCalibration.set(entry.value.key,{value:entry.value,blob});
+    }
     if(!Array.isArray(payload.takes)||payload.takes.length>10000)throw new Error("录音清单无效");
     if(payload.archiveTakes&&!Array.isArray(payload.archiveTakes))throw new Error("历史录音清单无效");
     if((payload.archiveTakes?.length||0)+payload.takes.length>10000)throw new Error("录音数量超过上限");
@@ -154,8 +180,8 @@ window.TextbookSync=(()=>{
       (payload.takes.includes(entry)?takes:archive).push(take);
     }
     takes.sort((a,b)=>a.created-b.created);
-    if(payload.sync&&payload.sync.version!==2)throw new Error("同步版本不支持，请先更新程序");
-    const incoming=payload.sync?.version===2?payload.sync.docs:await legacyDocs(payload,takes);
+    if(payload.sync&&![2,3].includes(payload.sync.version))throw new Error("同步版本不支持，请先更新程序");
+    const incoming=payload.sync?payload.sync.docs:await legacyDocs(payload,takes);
     if(!incoming||Object.keys(incoming).length>40000)throw new Error("同步清单过大或缺失");
     const local=await capture(),byKey=new Map(takes.map(t=>[sentenceKey(t),t])),actions=[];
     if(payload.sync&&(byKey.size!==takes.length||takes.some(t=>!incoming["take:"+sentenceKey(t)]?.value)))throw new Error("录音未登记或同一句重复登记");
@@ -165,9 +191,11 @@ window.TextbookSync=(()=>{
         const take=byKey.get(doc.key);
         if(!take||json(await takeValue(take))!==json(doc.value))throw new Error("录音或分析与清单不符");
       }
+      if(doc.kind==="calibration"&&doc.value&&json(byCalibration.get(doc.key)?.value)!==json(doc.value))throw new Error("校准样本与同步清单不符");
       actions.push({id,local:local.docs[id],incoming:doc,status:relation(local.docs[id],doc)});
     }
-    return {actions,byKey,local,payload,archive:payload.sync?archive:takes,archiveId:"import-"+await hash(payload)};
+    if([...byCalibration.keys()].some(key=>!incoming["calibration:"+key]?.value))throw new Error("校准样本未登记");
+    return {actions,byKey,byCalibration,local,payload,archive:payload.sync?archive:takes,archiveId:"import-"+await hash(payload)};
   }
   async function apply(plan,choices={}){
     return lock(async()=>{
@@ -218,6 +246,11 @@ window.TextbookSync=(()=>{
         const store=tx.objectStore("recordings"),previous=new Map(fresh.rows.map(row=>[row.id,row]));
         for(const row of fresh.rows)if(!rows.has(row.id))store.delete(row.id);
         for(const row of rows.values())if(previous.get(row.id)!==row)store.put(row);
+        for(const action of chosen.filter(a=>a.incoming.kind==="calibration")){
+          const id="calibration:"+action.incoming.key;
+          if(action.incoming.value)tx.objectStore("syncState").put({id,template:clone(plan.byCalibration.get(action.incoming.key))});
+          else tx.objectStore("syncState").delete(id);
+        }
         tx.objectStore("syncState").put({id:"ledger",docs});tx.objectStore("syncState").put({id:"pending",values});
       });
       await recover();return {updated:chosen.length,skipped:plan.actions.length-chosen.length,deleted:chosen.filter(a=>a.incoming.value===null).length};
@@ -243,5 +276,5 @@ window.TextbookSync=(()=>{
     });await capture();
   });}
   async function ready(){return lock(capture);}
-  return {db,all,backup,ready,capture,prepare,apply,replaceRecording,deleteRecording,sentenceKey,courseId,cleanAnalysis,hash,json,lock};
+  return {db,all,backup,ready,capture,prepare,apply,replaceRecording,deleteRecording,sentenceKey,courseId,cleanAnalysis,hash,json,lock,calibrations,saveCalibration};
 })();

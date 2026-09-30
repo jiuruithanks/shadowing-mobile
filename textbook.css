@@ -104,7 +104,8 @@
 .analysis-target{padding:12px 20px;flex:none;border-bottom:1px solid var(--line);max-height:150px;overflow:auto}
 .analysis-target p{font-size:18px;line-height:1.6;margin:0 0 5px;overflow-wrap:anywhere}
 .analysis-target span{font-size:11px}
-.analysis-status{padding:8px 20px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex:none;font-size:12px;color:#617368;background:#f5f8f6;min-height:42px}
+.analysis-status{padding:8px 20px;display:flex;gap:8px;align-items:center;justify-content:flex-start;flex:none;font-size:12px;color:#617368;background:#f5f8f6;min-height:42px}
+#analysisStatus{margin-left:auto;min-width:0;overflow-wrap:anywhere}
 .analysis-status .text-button{margin:0;font-size:12px;white-space:nowrap}
 .analysis-status{flex-wrap:wrap}
 .analysis-status [hidden],.exercise-recording[hidden],#recordingProgress[hidden]{display:none!important}
@@ -114,3 +115,20 @@
 @media(max-width:720px){.recordings-row audio{width:100%;min-width:0}.analysis-target{padding:10px 14px}.analysis-status{padding:8px 14px}#analysisDialog{max-width:calc(100vw - 16px)}}
 @media(max-width:720px){.mobile-nav-toggle{display:inline-flex;width:34px;height:34px}.sidebar{display:none}.nav-open .sidebar{display:block;position:fixed;top:60px;left:0;bottom:var(--panel-height);z-index:20;max-height:none;width:min(330px,92%);box-shadow:6px 0 18px #163e2120}.app-header{gap:10px}.practice{padding-top:18px}.app-header nav{display:none}.recordings-row audio[hidden],.recordings-row button[hidden]{display:none}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+.analysis-revisions { flex:none; margin:0; padding:0 20px; border-bottom:1px solid var(--line); background:#f5f8f6; max-height:45dvh; overflow:auto; }
+.analysis-revisions[hidden] { display:none; }
+.analysis-revisions summary { padding:8px 0 10px; cursor:pointer; font-size:12px; line-height:1.6; }
+.analysis-method-toggle { float:right; color:var(--green); margin-left:12px; }
+.analysis-timing-engine { font-size:12px; line-height:1.6; }
+.analysis-method-body { border-top:1px solid var(--line); padding:0 0 10px; }
+.analysis-method-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:16px; padding:10px 0; border-bottom:1px solid var(--line); font-size:12px; }
+.analysis-method-row p { margin:3px 0 0; color:#617368; line-height:1.6; }
+.analysis-revisions button { min-height:36px; padding:6px 10px; }
+.analysis-version-actions { display:flex; flex-wrap:wrap; gap:8px; padding-top:10px; }
+.analysis-candidate-note { flex-basis:100%; margin:0; font-size:12px; line-height:1.6; }
+.analysis-version-warning { margin:8px 0 0; font-size:11px; line-height:1.6; color:#617368; }
+.analysis-calibration-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding-top:10px; border-top:1px solid var(--line); margin-top:10px; font-size:12px; }
+.analysis-calibration-row select { max-width:100%; min-width:0; }
+.analysis-calibration-row p { flex-basis:100%; margin:0; color:#617368; line-height:1.6; }
+.analysis-calibration-summary { margin:8px 0 0; font-size:12px; line-height:1.6; color:#617368; }
+@media(max-width:720px){.analysis-revisions{padding:0 14px}.analysis-status{gap:8px}#analysisStatus{flex-basis:100%;margin-left:0}.analysis-method-toggle{float:none;display:block;margin:4px 0 0 14px}.analysis-method-row{gap:8px}.analysis-version-actions button{max-width:100%;white-space:normal;line-height:1.5}}
