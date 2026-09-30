@@ -131,18 +131,14 @@
 .analysis-calibration-row select { max-width:100%; min-width:0; }
 .analysis-calibration-row p { flex-basis:100%; margin:0; color:#617368; line-height:1.6; }
 .analysis-calibration-summary { margin:8px 0 0; font-size:12px; line-height:1.6; color:#617368; }
-.exercise-nav-entry{display:grid;grid-template-columns:minmax(0,1fr) 32px;align-items:center;gap:2px}
-.exercise-nav-entry .exercise-link{min-width:0}.exercise-nav-entry .nav-calibration{width:30px;height:36px;background:transparent;border:0;color:#56766a}
-.variant-calibration-controls{flex:none;margin:0;padding:8px 20px;border-bottom:1px solid var(--line);font-size:12px;max-height:210px;overflow:auto}
+.variant-calibration-controls{flex:none;margin:0;padding:8px 20px;border-bottom:1px solid var(--line);font-size:12px;max-height:min(340px,42dvh);overflow:auto}
 .variant-calibration-controls summary{cursor:pointer;font-weight:650;color:var(--green)}
 .variant-calibration-controls .analysis-calibration-row{padding-top:8px;margin-top:0;border:0}
 .variant-calibration-controls select{flex:1;min-width:0;max-width:500px}
-#titleCalibrationDialog{width:640px;max-width:calc(100vw - 24px);max-height:85dvh;padding:0}
-.title-calibration-body{padding:14px 20px;overflow:auto;max-height:70dvh}
-.title-calibration-body label{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px}
-.title-calibration-body select{min-width:0;width:100%;max-width:100%}
-.title-calibration-sample{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;padding:12px 0;border-bottom:1px solid var(--line)}
-.title-calibration-sample small{grid-column:1/-1;color:#617368}.title-calibration-sample p{margin:0;font-size:15px;overflow-wrap:anywhere}
-.title-calibration-sample button{align-self:center;white-space:nowrap}
-@media(max-width:720px){.variant-calibration-controls{padding:8px 14px}.title-calibration-body{padding:12px 14px}.title-calibration-sample{grid-template-columns:minmax(0,1fr)}.title-calibration-sample button{justify-self:end}}
+.collection-manual{flex-basis:100%;min-width:0}.collection-manual>select{width:100%;margin:8px 0}
+.collection-correspondence{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:end}
+.collection-correspondence p{grid-column:1/-1;overflow-wrap:anywhere}.collection-correspondence label{display:grid;gap:4px;min-width:0}
+.collection-correspondence input,.collection-correspondence select{width:100%;min-width:0;box-sizing:border-box}
+.collection-correspondence button{grid-column:span 2;justify-self:start;white-space:normal}
+@media(max-width:720px){.variant-calibration-controls{padding:8px 14px}.collection-correspondence{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:720px){.analysis-revisions{padding:0 14px}.analysis-status{gap:8px}#analysisStatus{flex-basis:100%;margin-left:0}.analysis-method-toggle{float:none;display:block;margin:4px 0 0 14px}.analysis-method-row{gap:8px}.analysis-version-actions button{max-width:100%;white-space:normal;line-height:1.5}}
