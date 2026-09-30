@@ -23,7 +23,7 @@ window.TextbookCalibration=(()=>{
       if(!blob.type.startsWith("audio/"))blob=new Blob([blob],{type:"audio/wav"});
       const audioHash=await ShadowingPackage.sha256Blob(blob),text=textOf(sentence);
       const value={key:JSON.stringify([track,audioHash,text]),track,audioHash,text,lessonId:sentence.lessonId,
-        duration,moras,created:analysis.created||take.created,sourceCreated:take.created};
+        exerciseId:sentence.exerciseId,sentenceIndex:sentence.index,duration,moras,created:analysis.created||take.created,sourceCreated:take.created};
       await TextbookSync.saveCalibration({value,blob},replace);
     }
   }
@@ -38,6 +38,39 @@ window.TextbookCalibration=(()=>{
   async function find(sentence){
     await seed();const text=textOf(sentence);
     return (await TextbookSync.calibrations()).filter(t=>t.value.text===text);
+  }
+  function commonRuns(source,target){
+    // A replacement exercise has fixed ends and a changed middle. Never match
+    // isolated repeated kana inside that middle to an unrelated occurrence.
+    let prefix=0,suffix=0;
+    while(prefix<Math.min(source.length,target.length)&&source[prefix].text===target[prefix].text)prefix++;
+    while(suffix<Math.min(source.length,target.length)-prefix&&source[source.length-1-suffix].text===target[target.length-1-suffix].text)suffix++;
+    const runs=[];
+    if(prefix>=3||prefix===source.length&&prefix===target.length)runs.push({source:0,target:0,length:prefix});
+    if(suffix>=3)runs.push({source:source.length-suffix,target:target.length-suffix,length:suffix});
+    return runs;
+  }
+  function variantPlan(analysis,template){
+    const reference=template.value.track==="reference",target=analysis?.result?.pitch?.moras||[],source=template.value.moras;
+    const plans=[];
+    for(const run of commonRuns(source,target)){
+      const pairs=Array.from({length:run.length},(_,i)=>({source:run.source+i,target:run.target+i}))
+        .filter(p=>source[p.source].confirmed&&!source[p.source].discarded);
+      if(!pairs.length)continue;
+      const first=pairs[0],last=pairs.at(-1),a=target[first.target],b=target[last.target];
+      const start=reference?a.time_start:a.recording_start,end=reference?b.time_end:b.recording_end;
+      if(!Number.isFinite(start)||!Number.isFinite(end)||end-start<.08)continue;
+      plans.push({source_start:source[first.source].start,source_end:source[last.source].end,target_start:start,target_end:end,pairs});
+    }
+    return plans;
+  }
+  async function variants(sentence,analysis,texts){
+    return (await sectionTemplates(sentence.lessonId,texts)).filter(t=>t.value.sourceCreated!==sentence.sourceCreated)
+      .map(template=>({template,plans:variantPlan(analysis,template)})).filter(item=>item.plans.length);
+  }
+  async function sectionTemplates(lessonId,texts){
+    await seed();const allowed=new Set(texts.map(text=>text.normalize("NFKC").trim()));
+    return (await TextbookSync.calibrations()).filter(t=>t.value.lessonId===lessonId&&allowed.has(t.value.text)&&t.value.moras.some(m=>m.confirmed));
   }
   function applyReference(analysis,template){
     const result=structuredClone(analysis),moras=result.result?.pitch?.moras||[],source=template.value.moras;
@@ -118,5 +151,37 @@ window.TextbookCalibration=(()=>{
     if(!response.ok)throw new Error(typeof result.detail==="string"?result.detail:"校准样本迁移失败");
     return buildCandidate(analysis,template,result);
   }
-  return {save,seed,find,reuseReference,applyReference,buildCandidate,protectCurrentManual,transfer};
+  function buildVariantCandidate(analysis,template,plans,result){
+    const next=structuredClone(analysis);delete next.previous;delete next.candidate;
+    const reference=template.value.track==="reference",moras=next.result.pitch.moras;
+    const pairs=new Map(plans.flatMap(p=>p.pairs).map(p=>[p.source,p.target]));let count=0;
+    for(const item of result.intervals){
+      const index=pairs.get(item.index),m=moras[index];if(!m||item.start===null||item.end===null)continue;
+      if(reference?m.reference_timing_manual||m.reference_timing_discarded:["manual","discarded"].includes(m.recording_match))continue;
+      const overlap=moras.some((other,i)=>i!==index&&(reference?other.reference_timing_manual:other.recording_match==="manual")&&item.start<(reference?other.time_end:other.recording_end)&&item.end>(reference?other.time_start:other.recording_start));
+      if(overlap)continue;
+      if(reference)Object.assign(m,{time_start:item.start,time_end:item.end,reference_timing_manual:false,reference_timing_discarded:false,timing_source:"variant-calibration-transfer",timing_issue:"替换句共同部分迁移，待核对"});
+      else Object.assign(m,{recording_start:item.start,recording_end:item.end,recording_match:"estimated",recording_timing_source:"calibrated-recording-transfer",recording_timing_issue:"替换句共同部分迁移，待核对"});
+      count++;
+    }
+    if(!count)throw new Error("共同部分没有可迁移的音拍，或与本次手动修订冲突");
+    next.variant_template={track:template.value.track,text:template.value.text,count,audioHash:template.value.audioHash};
+    next.created=Date.now();return next;
+  }
+  async function transferVariant(take,analysis,template){
+    const plans=variantPlan(analysis,template);
+    if(!plans.length)throw new Error("共同部分缺少可用的定位区间，请先完成本句分析");
+    let blob=template.value.track==="reference"?take.referenceBlob:take.blob;
+    if(!blob&&template.value.track==="reference"&&analysis.reference?.audio_url){
+      const response=await fetch(analysis.reference.audio_url);if(response.ok)blob=await response.blob();
+    }
+    if(!blob?.size)throw new Error("本句音频不可用");
+    const data=new FormData();data.append("sample",template.blob,"sample.wav");data.append("audio",blob,"target.wav");
+    data.append("moras",JSON.stringify(template.value.moras));data.append("segments",JSON.stringify(plans.map(p=>({...p,indices:p.pairs.map(pair=>pair.source),pairs:undefined}))));
+    const response=await fetch("/api/audio/mora-transfer",{method:"POST",body:data});const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(typeof result.detail==="string"?result.detail:"替换句校准复用失败");
+    if(result.scope!=="segments")throw new Error("本地服务尚未更新，请退出并重新打开日语跟读 App；当前校准未改动");
+    return buildVariantCandidate(analysis,template,plans,result);
+  }
+  return {save,seed,find,reuseReference,applyReference,buildCandidate,protectCurrentManual,transfer,commonRuns,variantPlan,variants,sectionTemplates,buildVariantCandidate,transferVariant};
 })();

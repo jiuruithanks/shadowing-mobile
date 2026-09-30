@@ -432,7 +432,15 @@ function renderNav() {
         const target=!query&&!recorded&&selected?state.item:item;
         selectItem(target.id,recorded?recordingProgress(target).counts.findIndex(n=>n>0):undefined);
       });
-      $("exerciseNav").append(button);
+      const entry=document.createElement("div");entry.className="exercise-nav-entry";
+      const reuse=TextbookTags.iconButton("copy","同一小标题的手动音拍校准");reuse.classList.add("nav-calibration");reuse.dataset.calibrationItem=item.id;
+      reuse.onclick=async()=>{
+        if(isRecording()){notice("请先停止录音。");return;}
+        const target=selected?state.item:item;
+        await selectItem(target.id);
+        if(state.item===target)openTitleCalibrationCatalog();
+      };
+      entry.append(button,reuse);$("exerciseNav").append(entry);
   }
   if(!available.length) {
     const p=document.createElement("p");p.className="muted";
@@ -905,6 +913,7 @@ function showAnalysisResult() {
   renderAnalysisRevisionControls();
 }
 function analysisTimingLabel(analysis) {
+  if(analysis?.variant_template)return "替换句共同部分校准复用（待核对）";
   const pitch=analysis?.result?.pitch;
   const method=pitch?.mora_timing_method;
   if(method==="mfa_phone_trial_recognized_text")return "本地 MFA 日语音素对齐（试算）";
@@ -948,15 +957,16 @@ function renderAnalysisRevisionControls() {
     trial.onclick=()=>runSentenceAnalysis(true,"phone_trial");methodRows[1].append(trial);
   }
   const versions=document.createElement("div");versions.className="analysis-version-actions";body.append(versions);
-  const migrationCandidate=analysis.candidate?.result?.pitch?.mora_timing_method==="calibrated_recording_transfer";
+  const migrationCandidate=Boolean(analysis.candidate?.variant_template)||analysis.candidate?.result?.pitch?.mora_timing_method==="calibrated_recording_transfer";
   for(const [field,label] of [["candidate",migrationCandidate?"启用迁移候选（保留本次手动修改）":"切换到新分析（不合并手动修改）"],["previous","恢复上次切换前的分析"]]) {
     if(!analysis[field])continue;
     const button=document.createElement("button");button.type="button";button.className="text-button";
+    button.dataset.analysisVersion=field;
     const icon=document.createElement("i");icon.dataset.lucide=field==="candidate"?"arrow-right-left":"rotate-ccw";
     const text=document.createElement("span");text.textContent=label;button.append(icon,text);
     button.onclick=()=>queueMoraEdit(async()=>{
       const current=view.analysis;let next=structuredClone(current[field]);if(!next)return;
-      const migration=field==="candidate"&&next.result?.pitch?.mora_timing_method==="calibrated_recording_transfer";
+      const migration=field==="candidate"&&(Boolean(next.variant_template)||next.result?.pitch?.mora_timing_method==="calibrated_recording_transfer");
       const manual=current.result?.pitch?.moras?.some(m=>m.reference_timing_manual||m.recording_match==="manual"||m.reference_timing_discarded||m.recording_match==="discarded");
       if(field==="candidate"&&manual&&!migration&&!confirm("切换后，当前图表会改用新分析结果。\n\n你手动调整或废弃的音拍不会合并到新分析中。它们会连同当前分析保留为上一版，可点击「恢复上次切换前的分析」恢复。只保留最近一次切换前的版本，不是永久备份。\n\n原始录音不会改变。\n\n点「取消」：保留当前分析和手动修改。\n点「好」：切换到新分析。"))return;
       const previous=structuredClone(current);delete previous.candidate;delete previous.previous;
@@ -994,20 +1004,91 @@ function renderAnalysisRevisionControls() {
   if(analysis.calibration_notice){const note=document.createElement("p");note.textContent=analysis.calibration_notice;body.append(note);}
   if(view.calibrationWarning){const note=document.createElement("p");note.textContent="校准库未读取："+view.calibrationWarning;body.append(note);}
   icons();
+  renderVariantCalibrationControls(view);
+}
+function titleCalibrationTexts(item=state.item){
+  return state.lesson.items.filter(other=>other.title===item.title).flatMap(other=>availableTurns(other).map(turn=>turn.ja));
+}
+async function openTitleCalibrationCatalog(){
+  if(!window.TextbookCalibration)return;
+  const item=state.item,lesson=state.lesson;
+  try{
+    const templates=await TextbookCalibration.sectionTemplates(lesson.id,titleCalibrationTexts(item));
+    if(state.item!==item)return;
+    let dialog=$("titleCalibrationDialog");if(!dialog){dialog=document.createElement("dialog");dialog.id="titleCalibrationDialog";document.body.append(dialog);}
+    dialog.replaceChildren();
+    const header=document.createElement("div");header.className="dialog-toolbar";
+    const title=document.createElement("strong");title.textContent=`第 ${lesson.number} 课 · ${item.title} · 手动校准`;
+    const close=TextbookTags.iconButton("x","关闭校准库");close.onclick=()=>dialog.close();header.append(title,close);dialog.append(header);
+    const body=document.createElement("div");body.className="title-calibration-body";dialog.append(body);
+    const label=document.createElement("label");label.textContent="复用到当前练习的句子 ";
+    const target=document.createElement("select");target.setAttribute("aria-label","选择目标句子");
+    itemTurns(item).forEach((turn,index)=>target.add(new Option(`${index+1} · ${turn.role} · ${turn.ja}`,String(index))));target.value=String(state.turn);
+    label.append(target);body.append(label);
+    if(!templates.length){const empty=document.createElement("p");empty.textContent="这个小标题下还没有保存的手动校准。先校准一个版本并保存，再到这里选择。";body.append(empty);}
+    for(const template of templates){
+      const row=document.createElement("div");row.className="title-calibration-sample";
+      const text=document.createElement("p");text.lang="ja";text.textContent=template.value.text;
+      const source=lesson.items.find(other=>availableTurns(other).some(turn=>turn.ja.normalize("NFKC").trim()===template.value.text));
+      const detail=document.createElement("small");detail.textContent=`${source?.number||"已保存样本"} · ${template.value.track==="reference"?"标准发音":"我的录音"} · 手动 ${template.value.moras.filter(m=>m.confirmed).length} 拍`;
+      const choose=document.createElement("button");choose.className="text-button";choose.innerHTML='<i data-lucide="copy"></i><span>选择此校准</span>';
+      choose.onclick=()=>{
+        state.turn=Number(target.value);activeTurn();
+        if(!selectedTake()){notice("目标句还没有录音，请先录音，再复用校准。");dialog.close();return;}
+        state.pendingVariantTemplate=template.value.key;dialog.close();$("analyzeRecording").click();
+      };
+      row.append(detail,text,choose);body.append(row);
+    }
+    dialog.showModal();icons();
+  }catch(error){notice("读取校准库失败："+error.message);}
+}
+function renderVariantCalibrationControls(view){
+  let panel=$("variantCalibrationControls");
+  if(!panel){panel=document.createElement("details");panel.id="variantCalibrationControls";panel.className="variant-calibration-controls";$("analysisStatus").closest(".analysis-status").after(panel);}
+  panel.replaceChildren();panel.hidden=false;
+  const summary=document.createElement("summary");summary.textContent="复用同一小标题的手动校准";panel.append(summary);
+  const entries=view.variantCalibrations||[],body=document.createElement("div");body.className="analysis-calibration-row";panel.append(body);
+  if(!entries.length){const note=document.createElement("p");note.textContent=view.calibrationsLoading?"正在读取校准库…":"当前小标题下没有可复用到本句的校准；共同部分至少需要连续 3 拍及可用的自动定位。";body.append(note);return;}
+  const select=document.createElement("select");select.setAttribute("aria-label","选择同标题校准来源");
+  for(const [i,{template,plans}] of entries.entries()){
+    const source=state.lesson.items.find(item=>availableTurns(item).some(turn=>turn.ja.normalize("NFKC").trim()===template.value.text));
+    select.add(new Option(`${source?.number||"已保存样本"} · ${template.value.track==="reference"?"标准发音":"我的录音"} · 可复用 ${plans.reduce((n,p)=>n+p.pairs.length,0)} 拍`,String(i)));
+  }
+  const chosen=entries.findIndex(e=>e.template.value.key===state.pendingVariantTemplate);
+  if(chosen>=0){select.value=String(chosen);panel.open=true;delete state.pendingVariantTemplate;}
+  const preview=document.createElement("p");preview.className="variant-calibration-source";preview.lang="ja";
+  select.onchange=()=>{preview.textContent=entries[Number(select.value)].template.value.text;};select.onchange();
+  const button=document.createElement("button");button.className="text-button";button.innerHTML='<i data-lucide="copy"></i><span>复用共同部分（生成候选）</span>';
+  button.onclick=()=>migrateCalibratedRecording(entries[Number(select.value)].template,button,true);
+  button.disabled=Boolean(window.TextbookOffline);
+  if(window.TextbookOffline)button.title="在电脑端生成迁移候选，再通过练习包带到手机";
+  body.append(select,button,preview);
+  if(view.analysis.candidate?.variant_template){
+    const adopt=document.createElement("button");adopt.className="text-button";adopt.innerHTML='<i data-lucide="check"></i><span>启用共同部分校准（保留手动修改）</span>';
+    adopt.onclick=()=>$("analysisRevisions").querySelector('[data-analysis-version="candidate"]').click();body.append(adopt);
+  }
+  if(view.analysis.variant_template&&!view.analysis.candidate){const status=document.createElement("p");status.textContent=`已复用 ${view.analysis.variant_template.count} 拍；替换内容保留原分析。`;body.append(status);}
+  icons();
 }
 async function refreshAnalysisCalibrations(view){
   if(!window.TextbookCalibration)return;
-  try{view.calibrations=await TextbookCalibration.find(view.sentence);}catch(error){view.calibrationWarning=error.message;}
+  view.calibrationsLoading=true;
+  try{
+    view.calibrations=await TextbookCalibration.find(view.sentence);
+    const item=state.lesson.items.find(i=>i.id===view.sentence.exerciseId)||state.item;
+    view.variantCalibrations=await TextbookCalibration.variants({...view.sentence,sourceCreated:view.take.created},view.analysis,titleCalibrationTexts(item));
+  }catch(error){view.calibrationWarning=error.message;}
+  view.calibrationsLoading=false;
   if(state.analysisView===view)renderAnalysisRevisionControls();
 }
-async function migrateCalibratedRecording(template,button){
+async function migrateCalibratedRecording(template,button,variant=false){
   const view=state.analysisView;if(!view?.analysis||isRecording())return;
   const current=view.analysis,generation=state.analysisEpoch;
   if(current.candidate&&!confirm("已有一份未启用候选。用这次校准迁移结果替换该候选？当前分析和手动修改保持不变。"))return;
   button.disabled=true;$("analysisStatus").textContent="正在根据校准样本匹配本次录音的节奏…";
   const ticket=await window.desktopSession?.begin("mora-transfer");
   try{
-    const candidate=await TextbookCalibration.transfer(view.take,current,template);
+    const candidate=await TextbookCalibration[variant?"transferVariant":"transfer"](view.take,current,template);
     rebuildMoraSpans(candidate.result.pitch);
     if(state.analysisView!==view||generation!==state.analysisEpoch)return;
     await queueMoraEdit(async()=>{
@@ -1284,7 +1365,7 @@ $("analyzeRecording").onclick=()=>{
   const voice=state.voices.find(v=>v.style_id===sentence.settings?.style_id);
   $("analysisReference").textContent="标准配音："+(voice?voice.speaker_name+" · "+styleLabel(voice.style_name):"原角色音色")+
     (take?" · "+new Date(take.created).toLocaleString("zh-CN")+" 的录音":"");
-  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-31";
+  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-32";
   $("analysisDialog").showModal();
   if(take)runSentenceAnalysis();else {$("analysisStatus").textContent="本句暂无录音";$("retryAnalysis").hidden=true;}
   updateAnalysisEntry();
