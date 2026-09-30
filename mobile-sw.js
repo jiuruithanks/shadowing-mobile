@@ -1,4 +1,4 @@
-const CACHE_NAME = "tokyo-shadowing-mobile-v35-calibration";
+const CACHE_NAME = "tokyo-shadowing-mobile-v36-calibration";
 const BASE_URL = new URL("./", self.location.href);
 const APP_SHELL_PATHS = [
   "textbook-phone-ui.js?v=transfer-ui-3",
@@ -20,16 +20,16 @@ const APP_SHELL_PATHS = [
   "mobile-textbook-tags-manage.html",
   "mobile-package.js?v=20260924-01",
   "textbook-package.js?v=sync-2",
-  "textbook-sync.js?v=calibration-34",
-  "textbook-calibration.js?v=calibration-34",
+  "textbook-sync.js?v=calibration-35",
+  "textbook-calibration.js?v=calibration-35",
   "textbook-sync.css?v=transfer-ui-3",
   "textbook-offline.js?v=1",
-  "textbook-transfer.js?v=calibration-34",
-  "textbook.js?v=calibration-34",
+  "textbook-transfer.js?v=calibration-35",
+  "textbook.js?v=calibration-35",
   "textbook-tags.js?v=mobile-1",
   "textbook-marks.js?v=mobile-1",
   "textbook-marked-practice.js?v=mobile-1",
-  "textbook.css?v=calibration-34",
+  "textbook.css?v=calibration-35",
   "textbook.css?v=shared-voices-1",
   "textbook-tags.css?v=2",
   "textbook-mobile.css?v=1",

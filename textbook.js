@@ -1191,7 +1191,8 @@ async function discardManualMora({index,track="recording"}) {
     view.analysis=updated;view.take.analysis=updated;
     const stored=state.takes.find(t=>t.id===view.take.id);if(stored)stored.analysis=updated;
     $("analysisStatus").textContent=`第 ${index+1} 拍的${track==="reference"?"标准发音":"录音"}区间已废弃，原始音频保留。`;
-    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index,result:updated.result,track},location.origin);
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index,result:updated.result,track,message:"区间已废弃；设置有效 A/B 并保存即可恢复。"},location.origin);
+    renderAnalysisRevisionControls();
   } catch(e){fail("废弃区间保存失败："+e.message);}
 }
 function rememberMoraEdit(updated,previous,track,index) {
@@ -1254,8 +1255,10 @@ function fitManualMoraInterval(pitch,index,start,end,duration,joins={},resolutio
 async function saveManualMora({index,start,end,joins={},track="recording",resolution="",allowManual=false}) {
   const view=state.analysisView,analysis=view?.analysis,pitch=analysis?.result?.pitch;
   const reference=track==="reference",mora=pitch?.moras?.[index];
+  const restoring=reference?!!mora?.reference_timing_discarded:mora?.recording_match==="discarded";
   const duration=analysis?.result?.audio_data?.[reference?"reference":"recording_raw"]?.duration;
   const fail=message=>{
+    if(restoring)message="恢复未保存，音拍仍为废弃状态："+message;
     $("analysisStatus").textContent=message;
     $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-error",index,message,track},location.origin);
   };
@@ -1290,11 +1293,13 @@ async function saveManualMora({index,start,end,joins={},track="recording",resolu
     updatedPitch.moras[index].reference_timing_discarded=false;
     updatedPitch.moras[index].time_start=start;updatedPitch.moras[index].time_end=end;
     updatedPitch.moras[index].timing_issue="";
+    updatedPitch.moras[index].timing_source="manual";
   } else {
     updatedPitch.moras[index].recording_match="manual";
     updatedPitch.moras[index].recording_start=start;
     updatedPitch.moras[index].recording_end=end;
     updatedPitch.moras[index].recording_timing_issue="";
+    updatedPitch.moras[index].recording_timing_source="manual";
   }
   delete updatedPitch.moras[index][track+"_discarded_interval"];
   rebuildMoraSpans(updatedPitch);
@@ -1303,12 +1308,12 @@ async function saveManualMora({index,start,end,joins={},track="recording",resolu
     view.analysis=updated;view.take.analysis=updated;
     const stored=state.takes.find(t=>t.id===view.take.id);
     if(stored)stored.analysis=updated;
-    $("analysisStatus").textContent=(reference?"标准发音":"我的录音")+"音拍调整已保存在本机。";
-    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index,result:updated.result,track},location.origin);
+    const message=restoring?"音拍已恢复并保存，废弃状态已清除。":"音拍调整已保存在本机。";
+    $("analysisStatus").textContent=(reference?"标准发音":"我的录音")+message;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index,result:updated.result,track,message},location.origin);
     await refreshAnalysisCalibrations(view);
   } catch(e) {
-    $("analysisStatus").textContent="手动对应保存失败："+e.message;
-    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-error",index,message:e.message,track},location.origin);
+    fail("手动对应保存失败："+e.message);
   }
 }
 async function runSentenceAnalysis(force=false,engine="current") {
@@ -1391,7 +1396,7 @@ $("analyzeRecording").onclick=()=>{
   const voice=state.voices.find(v=>v.style_id===sentence.settings?.style_id);
   $("analysisReference").textContent="标准配音："+(voice?voice.speaker_name+" · "+styleLabel(voice.style_name):"原角色音色")+
     (take?" · "+new Date(take.created).toLocaleString("zh-CN")+" 的录音":"");
-  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-34";
+  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-35";
   $("analysisDialog").showModal();
   if(take)runSentenceAnalysis();else {$("analysisStatus").textContent="本句暂无录音";$("retryAnalysis").hidden=true;}
   updateAnalysisEntry();
