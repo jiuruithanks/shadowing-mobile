@@ -948,28 +948,31 @@ function renderAnalysisRevisionControls() {
     trial.onclick=()=>runSentenceAnalysis(true,"phone_trial");methodRows[1].append(trial);
   }
   const versions=document.createElement("div");versions.className="analysis-version-actions";body.append(versions);
-  for(const [field,label] of [["candidate","切换到新分析（不合并手动修改）"],["previous","恢复上次切换前的分析"]]) {
+  const migrationCandidate=analysis.candidate?.result?.pitch?.mora_timing_method==="calibrated_recording_transfer";
+  for(const [field,label] of [["candidate",migrationCandidate?"启用迁移候选（保留本次手动修改）":"切换到新分析（不合并手动修改）"],["previous","恢复上次切换前的分析"]]) {
     if(!analysis[field])continue;
     const button=document.createElement("button");button.type="button";button.className="text-button";
     const icon=document.createElement("i");icon.dataset.lucide=field==="candidate"?"arrow-right-left":"rotate-ccw";
     const text=document.createElement("span");text.textContent=label;button.append(icon,text);
     button.onclick=()=>queueMoraEdit(async()=>{
-      const current=view.analysis,next=structuredClone(current[field]);if(!next)return;
+      const current=view.analysis;let next=structuredClone(current[field]);if(!next)return;
+      const migration=field==="candidate"&&next.result?.pitch?.mora_timing_method==="calibrated_recording_transfer";
       const manual=current.result?.pitch?.moras?.some(m=>m.reference_timing_manual||m.recording_match==="manual"||m.reference_timing_discarded||m.recording_match==="discarded");
-      if(field==="candidate"&&manual&&!confirm("切换后，当前图表会改用新分析结果。\n\n你手动调整或废弃的音拍不会合并到新分析中。它们会连同当前分析保留为上一版，可点击「恢复上次切换前的分析」恢复。只保留最近一次切换前的版本，不是永久备份。\n\n原始录音不会改变。\n\n点「取消」：保留当前分析和手动修改。\n点「好」：切换到新分析。"))return;
+      if(field==="candidate"&&manual&&!migration&&!confirm("切换后，当前图表会改用新分析结果。\n\n你手动调整或废弃的音拍不会合并到新分析中。它们会连同当前分析保留为上一版，可点击「恢复上次切换前的分析」恢复。只保留最近一次切换前的版本，不是永久备份。\n\n原始录音不会改变。\n\n点「取消」：保留当前分析和手动修改。\n点「好」：切换到新分析。"))return;
       const previous=structuredClone(current);delete previous.candidate;delete previous.previous;
       next.previous=previous;
       try {
+        if(migration){next=TextbookCalibration.protectCurrentManual(next,current);rebuildMoraSpans(next.result.pitch);}
         if(!await persistTakeAnalysis(view.take,view.sentence,next))throw new Error("录音已不存在");
         view.analysis=next;view.take.analysis=next;
         const stored=state.takes.find(t=>t.id===view.take.id);if(stored)stored.analysis=next;
-        showAnalysisResult();$("analysisStatus").textContent=field==="candidate"?"已切换到新分析，未合并手动修改。切换前的分析已保留，可点击恢复按钮找回。":"已恢复上次切换前的分析及其中的手动修改。";
+        showAnalysisResult();$("analysisStatus").textContent=migration?"已启用校准迁移，保留了本次最新手动修改；迁移音拍仍需核对。":field==="candidate"?"已切换到新分析，未合并手动修改。切换前的分析已保留，可点击恢复按钮找回。":"已恢复上次切换前的分析及其中的手动修改。";
       }catch(e){$("analysisStatus").textContent="版本切换未保存："+e.message;}
     });versions.append(button);
   }
   if(analysis.candidate){const note=document.createElement("p");note.className="analysis-candidate-note";note.textContent="候选音拍定位："+analysisTimingLabel(analysis.candidate)+"（未启用）。";versions.prepend(note);}
   const warning=document.createElement("p");warning.className="analysis-version-warning";
-  warning.textContent="重算只生成候选，不改变当前图表。切换后不合并手动修改；只保留最近一次切换前的分析，可恢复。原始录音不变。";body.append(warning);
+  warning.textContent=migrationCandidate?"启用迁移候选会保留本次最新的手动修改。迁移位置仍需核对；切换前的分析可恢复。原始录音不变。":"重算只生成候选，不改变当前图表。切换后不合并手动修改；只保留最近一次切换前的分析，可恢复。原始录音不变。";body.append(warning);
   if(view.calibrations?.length){
     const note=document.createElement("p");note.className="analysis-calibration-summary";
     const standard=view.calibrations.filter(t=>t.value.track==="reference").length;
@@ -1281,7 +1284,7 @@ $("analyzeRecording").onclick=()=>{
   const voice=state.voices.find(v=>v.style_id===sentence.settings?.style_id);
   $("analysisReference").textContent="标准配音："+(voice?voice.speaker_name+" · "+styleLabel(voice.style_name):"原角色音色")+
     (take?" · "+new Date(take.created).toLocaleString("zh-CN")+" 的录音":"");
-  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-29";
+  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-30";
   $("analysisDialog").showModal();
   if(take)runSentenceAnalysis();else {$("analysisStatus").textContent="本句暂无录音";$("retryAnalysis").hidden=true;}
   updateAnalysisEntry();

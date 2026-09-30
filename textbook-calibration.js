@@ -87,6 +87,25 @@ window.TextbookCalibration=(()=>{
       count:transfer.intervals.length,notice:transfer.notice||""};
     next.created=Date.now();return next;
   }
+  function protectCurrentManual(candidate,current){
+    const next=structuredClone(candidate),moras=next.result.pitch.moras,old=current.result.pitch;
+    if(moras.length!==old.moras.length||moras.some((m,i)=>m.text!==old.moras[i].text))throw new Error("候选音拍与当前分析不一致，请重新迁移");
+    for(const [i,m] of old.moras.entries()){
+      if(m.reference_timing_manual||m.reference_timing_discarded)for(const field of ["time_start","time_end","reference_timing_manual","reference_timing_discarded","reference_discarded_interval","timing_source","timing_issue"]){
+        if(field in m)moras[i][field]=structuredClone(m[field]);else delete moras[i][field];
+      }
+      if(m.recording_match==="manual"||m.recording_match==="discarded")for(const field of ["recording_start","recording_end","recording_match","recording_discarded_interval","recording_timing_source","recording_timing_issue"]){
+        if(field in m)moras[i][field]=structuredClone(m[field]);else delete moras[i][field];
+      }
+    }
+    for(const m of moras)if(m.recording_match==="estimated"&&moras.some(other=>other!==m&&other.recording_match==="manual"&&m.recording_start<other.recording_end&&m.recording_end>other.recording_start))
+      Object.assign(m,{recording_start:null,recording_end:null,recording_match:"uncertain",recording_timing_issue:"迁移区间与最新手动确认重叠，请手动设置"});
+    for(const m of moras)if(!m.reference_timing_manual&&!m.reference_timing_discarded&&Number.isFinite(m.time_start)&&moras.some(other=>other!==m&&other.reference_timing_manual&&m.time_start<other.time_end&&m.time_end>other.time_start))
+      Object.assign(m,{time_start:null,time_end:null,reference_timing_discarded:true,timing_issue:"自动区间与最新标准音校准重叠，请手动设置"});
+    next.result.pitch.manual_history=structuredClone(old.manual_history||[]);
+    next.result.pitch.manual_revision=old.manual_revision||0;
+    return next;
+  }
   async function transfer(take,analysis,template){
     const data=new FormData();
     data.append("sample",template.blob,"sample.wav");data.append("audio",take.blob,"recording.webm");
@@ -96,5 +115,5 @@ window.TextbookCalibration=(()=>{
     if(!response.ok)throw new Error(typeof result.detail==="string"?result.detail:"校准样本迁移失败");
     return buildCandidate(analysis,template,result);
   }
-  return {save,seed,find,reuseReference,applyReference,buildCandidate,transfer};
+  return {save,seed,find,reuseReference,applyReference,buildCandidate,protectCurrentManual,transfer};
 })();
