@@ -963,7 +963,7 @@ function renderAnalysisRevisionControls() {
       if(field==="candidate"&&manual&&!migration&&!confirm("切换后，当前图表会改用新分析结果。\n\n你手动调整或废弃的音拍不会合并到新分析中。它们会连同当前分析保留为上一版，可点击「恢复上次切换前的分析」恢复。只保留最近一次切换前的版本，不是永久备份。\n\n原始录音不会改变。\n\n点「取消」：保留当前分析和手动修改。\n点「好」：切换到新分析。"))return;
       const previous=structuredClone(current);delete previous.candidate;delete previous.previous;
       next.previous=previous;
-      if(field==="previous"&&current.collection_reuse)next.collection_reuse={...current.collection_reuse,message:"已恢复复用前的分析；可手动选择来源，或重新自动匹配。"};
+      if(field==="previous"&&current.collection_reuse)next.collection_reuse={...current.collection_reuse,status:"restored",message:"已恢复复用前的分析；可手动选择来源，或重新自动匹配。"};
       try {
         if(migration){next=TextbookCalibration.protectCurrentManual(next,current);rebuildMoraSpans(next.result.pitch);}
         if(!await persistTakeAnalysis(view.take,view.sentence,next))throw new Error("录音已不存在");
@@ -1076,7 +1076,7 @@ async function automaticallyReuseCollection(view,force=false){
   const current=view.analysis,generation=state.analysisEpoch;
   if(current.candidate){view.collectionStatus="已有未启用候选，请先处理候选，再自动匹配本组。";renderVariantCalibrationControls(view);return;}
   const signature=await TextbookSync.hash(entries.map(e=>({key:e.template.value.key,moras:e.template.value.moras})).sort((a,b)=>a.key.localeCompare(b.key)));
-  if(state.analysisView!==view||view.analysis!==current||(!force&&current.collection_reuse?.signature===signature))return;
+  if(state.analysisView!==view||view.analysis!==current||(!force&&current.collection_reuse?.signature===signature&&["complete","partial","unmatched","restored"].includes(current.collection_reuse.status)))return;
   view.collectionBusy=true;view.collectionStatus="正在匹配本组已校准的音拍…";renderVariantCalibrationControls(view);
   const ticket=await window.desktopSession?.begin("collection-calibration");
   try{
@@ -1095,7 +1095,7 @@ async function automaticallyReuseCollection(view,force=false){
       next=TextbookCalibration.protectCurrentManual(next,current);rebuildMoraSpans(next.result.pitch);
       const previous=structuredClone(current);delete previous.previous;delete previous.candidate;next.previous=previous;
     }
-    next.collection_reuse={signature,count,sources,message,created:Date.now()};
+    next.collection_reuse={signature,count,sources,message,status:failures.length?(count?"partial":"failed"):(count?"complete":"unmatched"),created:Date.now()};
     await queueMoraEdit(async()=>{
       if(state.analysisView!==view||view.analysis!==current)return;
       if(!await persistTakeAnalysis(view.take,view.sentence,next))throw new Error("录音已不存在");
@@ -1391,7 +1391,7 @@ $("analyzeRecording").onclick=()=>{
   const voice=state.voices.find(v=>v.style_id===sentence.settings?.style_id);
   $("analysisReference").textContent="标准配音："+(voice?voice.speaker_name+" · "+styleLabel(voice.style_name):"原角色音色")+
     (take?" · "+new Date(take.created).toLocaleString("zh-CN")+" 的录音":"");
-  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-33";
+  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-34";
   $("analysisDialog").showModal();
   if(take)runSentenceAnalysis();else {$("analysisStatus").textContent="本句暂无录音";$("retryAnalysis").hidden=true;}
   updateAnalysisEntry();
