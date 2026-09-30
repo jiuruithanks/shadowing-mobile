@@ -1136,6 +1136,7 @@ window.addEventListener("message",event=>{
   if(event.data?.type==="textbook-analysis-manual-mora")queueMoraEdit(()=>saveManualMora(event.data));
   if(event.data?.type==="textbook-analysis-discard-mora")queueMoraEdit(()=>discardManualMora(event.data));
   if(event.data?.type==="textbook-analysis-undo-mora")queueMoraEdit(()=>undoManualMora(event.data));
+  if(event.data?.type==="textbook-analysis-pause")queueMoraEdit(()=>saveManualPause(event.data));
   if(event.data?.type==="textbook-analysis-loops"){
     const view=state.analysisView;
     if(!view?.analysis||!Array.isArray(event.data.loops))return;
@@ -1198,7 +1199,7 @@ async function discardManualMora({index,track="recording"}) {
 function rememberMoraEdit(updated,previous,track,index) {
   const pitch=previous.result.pitch;
   updated.result.pitch.manual_history=[...(pitch.manual_history||[]),{
-    created:Date.now(),track,index,moras:structuredClone(pitch.moras),mora_spans:structuredClone(pitch.mora_spans),
+    created:Date.now(),track,index,moras:structuredClone(pitch.moras),mora_spans:structuredClone(pitch.mora_spans),pause_intervals:structuredClone(pitch.pause_intervals||{}),
   }].slice(-30);
   updated.result.pitch.manual_revision=(pitch.manual_revision||0)+1;
 }
@@ -1206,7 +1207,7 @@ async function undoManualMora({track="recording"}={}) {
   const view=state.analysisView,analysis=view?.analysis,history=analysis?.result?.pitch?.manual_history;
   if(!history?.length)return;
   const updated=structuredClone(analysis),snapshot=updated.result.pitch.manual_history.pop();
-  Object.assign(updated.result.pitch,{moras:snapshot.moras,mora_spans:snapshot.mora_spans,manual_revision:(analysis.result.pitch.manual_revision||0)+1});
+  Object.assign(updated.result.pitch,{moras:snapshot.moras,mora_spans:snapshot.mora_spans,pause_intervals:snapshot.pause_intervals||{},manual_revision:(analysis.result.pitch.manual_revision||0)+1});
   try {
     if(!await persistTakeAnalysis(view.take,view.sentence,updated))throw new Error("录音已不存在");
     view.analysis=updated;view.take.analysis=updated;
@@ -1214,6 +1215,53 @@ async function undoManualMora({track="recording"}={}) {
     $("analysisStatus").textContent="已撤销上一次音拍调整。";
     $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index:snapshot.index,result:updated.result,track,resetDrafts:true},location.origin);
   } catch(e){$("analysisStatus").textContent="撤销未保存："+e.message;}
+}
+async function saveManualPause({track="recording",id,after_index,start,end,remove=false}) {
+  const view=state.analysisView,analysis=view?.analysis,pitch=analysis?.result?.pitch;
+  const fail=message=>{
+    $("analysisStatus").textContent=message;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-pause-error",message},location.origin);
+  };
+  if(!pitch||!["reference","recording"].includes(track)){fail("音频数据无效，请重新打开分析");return;}
+  const duration=analysis.result.audio_data?.[track==="reference"?"reference":"recording_raw"]?.duration;
+  const saved=pitch.pause_intervals?.[track]||[],old=saved.find(p=>p.id===id);
+  if(remove&&!old){fail("停顿区间不存在，请重新选择");return;}
+  if(!remove){
+    if(!Number.isInteger(after_index)||after_index<0||after_index>=pitch.moras.length-1||
+      !Number.isFinite(start)||!Number.isFinite(end)||start<0||end-start<.02||!Number.isFinite(duration)||end>duration){fail("请选择有效的中间停顿区间，至少 0.02 秒");return;}
+    if(old&&old.after_index!==after_index){fail("调整现有停顿的位置时，请先删除，再在新的两拍之间添加");return;}
+    if(saved.some(p=>p.id!==id&&(p.after_index===after_index||start<p.end&&end>p.start))){fail("此位置已有停顿，或与其他停顿重叠，请选择已有停顿调整");return;}
+    const spans=sourceMoraSpans(pitch,track),previous=spans.find(s=>s.index===after_index),next=spans.find(s=>s.index===after_index+1);
+    if(!previous||!next){fail("停顿两边的音拍需要先设置有效区间");return;}
+    if(start-previous.recording_start<=.016||next.recording_end-end<=.016){fail("停顿会覆盖整拍或使音拍过短，请调整 A/B 或选择正确的两拍");return;}
+    if(spans.some(s=>s.index!==after_index&&s.index!==after_index+1&&start<s.recording_end&&end>s.recording_start)){fail("停顿跨过了其他音拍，请缩小区间");return;}
+  }
+  const updated=structuredClone(analysis),nextPitch=updated.result.pitch;
+  rememberMoraEdit(updated,analysis,track,remove?old.after_index:after_index);
+  nextPitch.pause_intervals ||= {};
+  nextPitch.pause_intervals[track]=saved.filter(p=>p.id!==id).map(p=>({...p}));
+  if(!remove){
+    nextPitch.pause_intervals[track].push({id:id||crypto.randomUUID(),after_index,start,end,confirmed:true});
+    nextPitch.pause_intervals[track].sort((a,b)=>a.start-b.start);
+    const previous=nextPitch.moras[after_index],next=nextPitch.moras[after_index+1];
+    if(track==="reference"){
+      Object.assign(previous,{time_end:start,reference_timing_manual:true,timing_source:"manual",timing_issue:""});
+      Object.assign(next,{time_start:end,reference_timing_manual:true,timing_source:"manual",timing_issue:""});
+    }else{
+      Object.assign(previous,{recording_end:start,recording_match:"manual",recording_timing_source:"manual",recording_timing_issue:""});
+      Object.assign(next,{recording_start:end,recording_match:"manual",recording_timing_source:"manual",recording_timing_issue:""});
+    }
+  }
+  rebuildMoraSpans(nextPitch);
+  try {
+    if(!await persistTakeAnalysis(view.take,view.sentence,updated))throw new Error("录音已不存在");
+    view.analysis=updated;view.take.analysis=updated;
+    const stored=state.takes.find(t=>t.id===view.take.id);if(stored)stored.analysis=updated;
+    const message=remove?"停顿已删除，相邻音拍间的空隙保留，可继续调整或撤销。":"停顿已保存，两边音拍边界已接合。";
+    $("analysisStatus").textContent=message;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",result:updated.result,track,resetDrafts:true,pauseSaved:true,message},location.origin);
+    await refreshAnalysisCalibrations(view);
+  }catch(error){fail("停顿未保存："+error.message);}
 }
 function fitManualMoraInterval(pitch,index,start,end,duration,joins={},resolution="",allowManual=false) {
   const outside=pitch.mora_spans.filter(span=>span.index!==index).map(span=>({...span}));
@@ -1267,6 +1315,11 @@ async function saveManualMora({index,start,end,joins={},track="recording",resolu
   const intervals={mora_spans:sourceMoraSpans(pitch,track)};
   const fitted=fitManualMoraInterval(intervals,index,start,end,duration,joins,resolution,allowManual);
   if(fitted.error){fail(fitted.error);return;}
+  const pauses=pitch.pause_intervals?.[track]||[];
+  const proposed=[{recording_start:fitted.start,recording_end:fitted.end},...fitted.outside];
+  if(pauses.some(p=>proposed.some(s=>s.recording_start<p.end-.000001&&s.recording_end>p.start+.000001))){
+    fail("音拍区间进入已确认的停顿，请先调整或删除该停顿。");return;
+  }
   ({start,end}=fitted);const spans=fitted.outside;
   const updated=structuredClone(analysis),updatedPitch=updated.result.pitch;
   rememberMoraEdit(updated,analysis,track,index);
@@ -1396,7 +1449,7 @@ $("analyzeRecording").onclick=()=>{
   const voice=state.voices.find(v=>v.style_id===sentence.settings?.style_id);
   $("analysisReference").textContent="标准配音："+(voice?voice.speaker_name+" · "+styleLabel(voice.style_name):"原角色音色")+
     (take?" · "+new Date(take.created).toLocaleString("zh-CN")+" 的录音":"");
-  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-35";
+  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-37";
   $("analysisDialog").showModal();
   if(take)runSentenceAnalysis();else {$("analysisStatus").textContent="本句暂无录音";$("retryAnalysis").hidden=true;}
   updateAnalysisEntry();

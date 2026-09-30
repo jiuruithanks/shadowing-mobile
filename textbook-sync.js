@@ -148,6 +148,15 @@ window.TextbookSync=(()=>{
       !Number.isFinite(value.created)||value.key!==JSON.stringify([value.track,value.audioHash,value.text]))throw new Error("校准样本格式无效");
     for(const [index,m] of value.moras.entries())if(m.index!==index||typeof m.text!=="string"||typeof m.confirmed!=="boolean"||typeof m.discarded!=="boolean"||
       m.confirmed&&(!Number.isFinite(m.start)||!Number.isFinite(m.end)||m.start<0||m.end<=m.start||m.end>value.duration+.01))throw new Error("校准音拍区间无效");
+    if(value.pauses!==undefined){
+      if(!Array.isArray(value.pauses)||value.pauses.length>1000)throw new Error("校准停顿清单无效");
+      const used=new Set();
+      for(const p of value.pauses){
+        if(!p||typeof p.id!=="string"||used.has(p.id)||!Number.isInteger(p.after_index)||p.after_index<0||p.after_index>=value.moras.length-1||
+          !Number.isFinite(p.start)||!Number.isFinite(p.end)||p.start<0||p.end<=p.start||p.end>value.duration+.01)throw new Error("校准停顿区间无效");
+        used.add(p.id);
+      }
+    }
   }
   async function legacyDocs(payload,takes){
     const docs={};const add=async(kind,key,lessonId,value)=>{

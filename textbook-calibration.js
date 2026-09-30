@@ -23,7 +23,7 @@ window.TextbookCalibration=(()=>{
       if(!blob.type.startsWith("audio/"))blob=new Blob([blob],{type:"audio/wav"});
       const audioHash=await ShadowingPackage.sha256Blob(blob),text=textOf(sentence);
       const value={key:JSON.stringify([track,audioHash,text]),track,audioHash,text,lessonId:sentence.lessonId,
-        exerciseId:sentence.exerciseId,sentenceIndex:sentence.index,duration,moras,created:analysis.created||take.created,sourceCreated:take.created};
+        exerciseId:sentence.exerciseId,sentenceIndex:sentence.index,duration,moras,pauses:structuredClone(analysis.result.pitch.pause_intervals?.[track]||[]),created:analysis.created||take.created,sourceCreated:take.created};
       await TextbookSync.saveCalibration({value,blob},replace);
     }
   }
@@ -127,6 +127,11 @@ window.TextbookCalibration=(()=>{
         Object.assign(m,{time_start:null,time_end:null,reference_timing_discarded:true,timing_issue:"自动区间与已复用的标准音校准重叠，请手动确认"});
     }
     if(count)result.reference_calibration={audioHash:template.value.audioHash,count,created:template.value.created};
+    if(template.value.pauses?.length&&!result.result.pitch.pause_intervals?.reference?.length){
+      result.result.pitch.pause_intervals ||= {};
+      result.result.pitch.pause_intervals.reference=structuredClone(template.value.pauses.filter(p=>
+        Math.abs(moras[p.after_index]?.time_end-p.start)<.000001&&Math.abs(moras[p.after_index+1]?.time_start-p.end)<.000001));
+    }
     return {analysis:result,count};
   }
   async function reuseReference(take,sentence,analysis){
@@ -179,15 +184,23 @@ window.TextbookCalibration=(()=>{
       Object.assign(m,{time_start:null,time_end:null,reference_timing_discarded:true,timing_issue:"自动区间与最新标准音校准重叠，请手动设置"});
     next.result.pitch.manual_history=structuredClone(old.manual_history||[]);
     next.result.pitch.manual_revision=old.manual_revision||0;
+    next.result.pitch.pause_intervals={...structuredClone(next.result.pitch.pause_intervals||{}),...structuredClone(old.pause_intervals||{})};
     return next;
+  }
+  function transferPauses(data,analysis,template,track){
+    const pauses={source:template.value.pauses||[],target:analysis.result.pitch.pause_intervals?.[track]||[]};
+    if(pauses.source.length||pauses.target.length)data.append("pauses",JSON.stringify(pauses));
+    return pauses.source.length||pauses.target.length;
   }
   async function transfer(take,analysis,template){
     const data=new FormData();
     data.append("sample",template.blob,"sample.wav");data.append("audio",take.blob,"recording.webm");
     data.append("moras",JSON.stringify(template.value.moras));
+    const hasPauses=transferPauses(data,analysis,template,"recording");
     const response=await fetch("/api/audio/mora-transfer",{method:"POST",body:data});
     const result=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(typeof result.detail==="string"?result.detail:"校准样本迁移失败");
+    if(hasPauses&&result.pause_handling!=="separate")throw new Error("停顿匹配服务尚未更新，请退出并重新打开日语跟读 App，再复用校准");
     return buildCandidate(analysis,template,result);
   }
   function buildVariantCandidate(analysis,template,plans,result,automatic=false){
@@ -217,10 +230,12 @@ window.TextbookCalibration=(()=>{
     }
     if(!blob?.size)throw new Error("本句音频不可用");
     const data=new FormData();data.append("sample",template.blob,"sample.wav");data.append("audio",blob,"target.wav");
+    const hasPauses=transferPauses(data,analysis,template,template.value.track);
     data.append("moras",JSON.stringify(template.value.moras));data.append("segments",JSON.stringify(plans.map(p=>({...p,indices:p.pairs.map(pair=>pair.source),pairs:undefined}))));
     const response=await fetch("/api/audio/mora-transfer",{method:"POST",body:data});const result=await response.json().catch(()=>({}));
     if(!response.ok)throw new Error(typeof result.detail==="string"?result.detail:"替换句校准复用失败");
     if(result.scope!=="segments")throw new Error("本地服务尚未更新，请退出并重新打开日语跟读 App；当前校准未改动");
+    if(hasPauses&&result.pause_handling!=="separate")throw new Error("停顿匹配服务尚未更新，请退出并重新打开日语跟读 App，再复用校准");
     return buildVariantCandidate(analysis,template,plans,result,automatic);
   }
   return {save,seed,find,reuseReference,applyReference,buildCandidate,protectCurrentManual,transfer,commonRuns,variantPlan,variants,sectionTemplates,buildVariantCandidate,transferVariant,manualPlan,automaticSelections};
