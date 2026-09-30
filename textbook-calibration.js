@@ -72,8 +72,11 @@ window.TextbookCalibration=(()=>{
       if(m.recording_match==="manual"||m.recording_match==="discarded")continue;
       if(item.start===null||item.end===null){
         Object.assign(m,{recording_start:null,recording_end:null,recording_match:"uncertain",recording_timing_issue:item.issue||"样本迁移未定位，请手动设置"});
-      }else Object.assign(m,{recording_start:item.start,recording_end:item.end,recording_match:"estimated",
-        recording_timing_source:"calibrated-recording-transfer",recording_timing_issue:item.issue||"根据校准样本迁移，待确认"});
+      }else {
+        const missing=["unmatched","uncertain"].includes(m.recording_match);
+        Object.assign(m,{recording_start:item.start,recording_end:item.end,recording_match:"estimated",
+          recording_timing_source:"calibrated-recording-transfer",recording_timing_issue:missing?"本次文字识别未确认这个音拍，请重点检查迁移位置":item.issue||"根据校准样本迁移，待确认"});
+      }
     }
     // Never let an inferred boundary overlap a manually confirmed one.
     for(const m of moras){

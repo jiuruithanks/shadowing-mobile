@@ -1284,7 +1284,7 @@ $("analyzeRecording").onclick=()=>{
   const voice=state.voices.find(v=>v.style_id===sentence.settings?.style_id);
   $("analysisReference").textContent="标准配音："+(voice?voice.speaker_name+" · "+styleLabel(voice.style_name):"原角色音色")+
     (take?" · "+new Date(take.created).toLocaleString("zh-CN")+" 的录音":"");
-  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-30";
+  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-31";
   $("analysisDialog").showModal();
   if(take)runSentenceAnalysis();else {$("analysisStatus").textContent="本句暂无录音";$("retryAnalysis").hidden=true;}
   updateAnalysisEntry();
