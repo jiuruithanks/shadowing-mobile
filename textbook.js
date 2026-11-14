@@ -942,6 +942,7 @@ $("takes").onchange=selectTake;
 $("recordedAudio").onplay=()=>{
   stopPreview();
   if(isRecording()){$("recordedAudio").pause();notice("请先停止录音。");return;}
+  setPhoneAudioSession("playback");
   cancelPlayback();
 };
 $("downloadRecording").onclick=()=>{
@@ -1973,6 +1974,10 @@ function stopRecordingMeter() {
   }
   setRecordingMeter("idle");
 }
+function setPhoneAudioSession(type) {
+  if(!window.TextbookOffline||!navigator.audioSession)return;
+  try{navigator.audioSession.type=type;}catch{}
+}
 function startRecordingMeter(stream,recorder) {
   stopRecordingMeter();
   const AudioContextClass=window.AudioContext||window.webkitAudioContext;
@@ -2022,6 +2027,7 @@ async function startRecording(analysisView=null) {
   try {
     desktopTicket=await window.desktopSession?.begin();
     await state.db;
+    setPhoneAudioSession("play-and-record");
     const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
     state.stream=stream;
     const type=["audio/mp4","audio/webm;codecs=opus","audio/webm"].find(t=>MediaRecorder.isTypeSupported(t));
@@ -2031,6 +2037,7 @@ async function startRecording(analysisView=null) {
     recorder.onstop=async()=>{
       stopRecordingMeter();
       stream.getTracks().forEach(t=>t.stop());state.stream=null;state.recorder=null;clearInterval(state.recordTimer);
+      setPhoneAudioSession("playback");
       $("record").classList.remove("is-recording");setIcon($("record"),"mic","开始录音");
       $("record").disabled=false;state.recordingPending=false;
       const blob=new Blob(chunks,{type:recorder.mimeType||chunks[0]?.type||"audio/webm"});
@@ -2069,6 +2076,7 @@ async function startRecording(analysisView=null) {
       window.desktopSession?.end(desktopTicket);
       stopRecordingMeter();
       stream.getTracks().forEach(t=>t.stop());clearInterval(state.recordTimer);
+      setPhoneAudioSession("playback");
       state.recorder=null;state.stream=null;state.recordingPending=false;
       $("record").disabled=false;$("record").classList.remove("is-recording");setIcon($("record"),"mic","开始录音");
       report("录音中断，请重试。");
@@ -2088,6 +2096,7 @@ async function startRecording(analysisView=null) {
     await window.desktopSession?.end(desktopTicket);
     stopRecordingMeter();
     state.stream?.getTracks().forEach(t=>t.stop());state.stream=null;state.recordingPending=false;$("record").disabled=false;
+    setPhoneAudioSession("playback");
     report(e.name==="NotAllowedError"?"麦克风权限未获允许，请在浏览器设置中允许录音。":"无法开始录音："+e.message);
     updateAnalysisEntry();
   }
@@ -2101,7 +2110,11 @@ $("record").onclick=()=>{
   } else if(!isRecording())startRecording();
 };
 window.addEventListener("beforeunload",event=>{if(isRecording()){event.preventDefault();event.returnValue="";}});
-window.addEventListener("pagehide",()=>{stopRecordingMeter();clearInterval(state.recordTimer);state.stream?.getTracks().forEach(t=>t.stop());});
+window.addEventListener("pagehide",()=>{
+  stopRecordingMeter();clearInterval(state.recordTimer);
+  state.stream?.getTracks().forEach(t=>t.stop());
+  if(state.stream||state.recordingPending)setPhoneAudioSession("playback");
+});
 const synthesisFields=[
   {id:"synthesisSpeed",key:"speed",min:.5,max:2,step:.05,default:1},
   {id:"emotion",key:"emotion",min:0,max:2,step:.05,default:1},

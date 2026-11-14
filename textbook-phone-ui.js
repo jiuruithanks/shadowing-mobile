@@ -1,5 +1,6 @@
 "use strict";
 document.addEventListener("DOMContentLoaded",()=>{
+  setPhoneAudioSession("playback");
   const byId=id=>document.getElementById(id);
   const iconButton=(icon,label)=>{
     const button=document.createElement("button");button.className="icon-button";
@@ -55,7 +56,10 @@ document.addEventListener("DOMContentLoaded",()=>{
   };
   playRecording.onclick=async()=>{
     if(isRecording()){notice("请先停止录音。");return;}
-    if(player.paused)recordingBoost?.resume();
+    if(player.paused){
+      setPhoneAudioSession("playback");
+      recordingBoost?.resume();
+    }
     try{if(player.paused)await player.play();else player.pause();}catch(error){notice("录音暂时无法播放："+error.message);}
   };
   for(const event of ["play","pause","ended","emptied"])player.addEventListener(event,updatePlayback);
