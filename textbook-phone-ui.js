@@ -31,21 +31,26 @@ document.addEventListener("DOMContentLoaded",()=>{
   const player=byId("recordedAudio"),playRecording=iconButton("play","播放我的录音");playRecording.id="phonePlayRecording";
   const recordingBoost=window.TextbookVolume?.createRecordingBoost(player);
   if(recordingBoost&&(window.AudioContext||window.webkitAudioContext)){
-    const button=document.createElement("button");
-    button.type="button";
-    button.textContent="回放增强 +12 dB";
-    button.setAttribute("aria-pressed","false");
-    button.onclick=()=>{
+    const controls=document.createElement("div");
+    controls.className="recording-boost";
+    const label=document.createElement("label");
+    label.textContent="录音回放音量";
+    const select=document.createElement("select");
+    for(const [text,db] of [["原始音量",0],["提高 +6 dB",6],["提高 +12 dB",12],["提高 +18 dB",18],["提高 +24 dB",24]]){
+      select.add(new Option(text,String(db)));
+    }
+    select.onchange=()=>{
       try{
-        recordingBoost.set(!recordingBoost.enabled);
-        button.setAttribute("aria-pressed",String(recordingBoost.enabled));
-        button.textContent=recordingBoost.enabled?"回放增强已开启 · 点击关闭":"回放增强 +12 dB";
+        setPhoneAudioSession("playback");
+        recordingBoost.set(Number(select.value));
       }catch{
-        button.disabled=true;
-        button.textContent="当前浏览器无法增强回放";
+        select.value="0";
+        select.disabled=true;
+        notice("当前浏览器无法增强回放。");
       }
     };
-    recordings.append(button);
+    label.append(select);controls.append(label);
+    recordings.append(controls);
     player.addEventListener("play",recordingBoost.resume);
   }
   const updatePlayback=()=>{

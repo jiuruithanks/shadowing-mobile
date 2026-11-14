@@ -51,13 +51,13 @@ window.TextbookVolume=(()=>{
   }
 
   function createRecordingBoost(player){
-    let source,boost,limiter,enabled=false;
-    function set(next){
+    let source,boost;
+    function set(decibels){
+      if(!source&&decibels===0)return;
       const audioContext=getContext();
       if(!source){
         boost=audioContext.createGain();
-        boost.gain.value=10**(12/20);
-        limiter=audioContext.createDynamicsCompressor();
+        const limiter=audioContext.createDynamicsCompressor();
         limiter.threshold.value=-8;
         limiter.knee.value=4;
         limiter.ratio.value=20;
@@ -67,14 +67,14 @@ window.TextbookVolume=(()=>{
         limiter.connect(audioContext.destination);
         source=audioContext.createMediaElementSource(player);
       }else source.disconnect();
-      source.connect(next?boost:audioContext.destination);
-      enabled=next;
+      boost.gain.value=10**(decibels/20);
+      source.connect(decibels>0?boost:audioContext.destination);
       resume();
     }
     function resume(){
       if(source&&context.state!=="running")void context.resume().catch(()=>{});
     }
-    return {set,resume,get enabled(){return enabled;}};
+    return {set,resume};
   }
 
   function addControls(container){

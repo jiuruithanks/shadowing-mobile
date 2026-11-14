@@ -1,8 +1,9 @@
-const CACHE_NAME = "tokyo-shadowing-mobile-v87-playback-session";
+const CACHE_NAME = "tokyo-shadowing-mobile-v88-recording-volume";
 const BASE_URL = new URL("./", self.location.href);
 const APP_SHELL_PATHS = [
-  "textbook-phone-ui.js?v=audio-session-1",
+  "textbook-phone-ui.js?v=recording-volume-1",
   "textbook-volume.js?v=3",
+  "textbook-volume.js?v=4",
   "mobile.html",
   "mobile.css?v=20260916-02",
   "mobile-package.js?v=20260915-02",
@@ -42,6 +43,7 @@ const APP_SHELL_PATHS = [
   "textbook-tags.css?v=2",
   "textbook-mobile.css?v=1",
   "textbook-mobile.css?v=volume-1",
+  "textbook-mobile.css?v=volume-2",
   "textbook-assets/lucide.js",
 ];
 const APP_SHELL = APP_SHELL_PATHS.map((path) => new URL(path, BASE_URL).href);

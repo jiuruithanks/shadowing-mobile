@@ -40,6 +40,9 @@
 .phone-sheet>a,.phone-sheet>button{display:block;text-align:left;width:calc(100% - 32px);margin:8px 16px;padding:14px 10px;border:0;border-bottom:1px solid var(--line);background:white;color:var(--green);font-size:16px;min-height:48px}
 .phone-sheet>p{padding:0 24px;font-size:14px;line-height:1.6}
 .phone-sheet [hidden]{display:none!important}
+.recording-boost{padding:0 16px 16px}
+.recording-boost label{display:flex;align-items:center;gap:12px;font-size:14px}
+.recording-boost select{min-height:44px;padding:6px 10px;font-size:16px;border:1px solid var(--line);border-radius:5px;background:white;color:inherit}
 .offline-textbook .phone-sheet .recordings-row{display:grid;grid-template-columns:minmax(0,1fr) 44px 44px;margin:0;padding:16px;gap:12px}
 .offline-textbook .phone-sheet .recordings-row>span{grid-column:1/-1;font-size:14px}
 .offline-textbook .phone-sheet #takes{grid-column:1/-1;width:100%;max-width:none;height:46px;font-size:16px}
