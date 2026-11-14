@@ -19,13 +19,21 @@ window.TextbookVolume=(()=>{
     for(const player of players)if(!connected.has(player))player.volume=level/100;
   }
 
+  function getContext(){
+    if(!context){
+      const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+      context=new AudioContextClass();
+    }
+    return context;
+  }
+
   function prepare(player){
     players.add(player);
     const AudioContextClass=window.AudioContext||window.webkitAudioContext;
     if(AudioContextClass){
       try{
-        if(!context){
-          context=new AudioContextClass();
+        if(!gain){
+          getContext();
           gain=context.createGain();
           gain.gain.value=level/100;
           gain.connect(context.destination);
@@ -40,6 +48,33 @@ window.TextbookVolume=(()=>{
       }catch{}
     }
     update();
+  }
+
+  function createRecordingBoost(player){
+    let source,boost,limiter,enabled=false;
+    function set(next){
+      const audioContext=getContext();
+      if(!source){
+        boost=audioContext.createGain();
+        boost.gain.value=10**(12/20);
+        limiter=audioContext.createDynamicsCompressor();
+        limiter.threshold.value=-8;
+        limiter.knee.value=4;
+        limiter.ratio.value=20;
+        limiter.attack.value=0.003;
+        limiter.release.value=0.15;
+        boost.connect(limiter);
+        limiter.connect(audioContext.destination);
+        source=audioContext.createMediaElementSource(player);
+      }else source.disconnect();
+      source.connect(next?boost:audioContext.destination);
+      enabled=next;
+      resume();
+    }
+    function resume(){
+      if(source&&context.state!=="running")void context.resume().catch(()=>{});
+    }
+    return {set,resume,get enabled(){return enabled;}};
   }
 
   function addControls(container){
@@ -78,5 +113,5 @@ window.TextbookVolume=(()=>{
     container.append(controls);
     refresh();
   }
-  return {prepare,addControls};
+  return {prepare,addControls,createRecordingBoost};
 })();

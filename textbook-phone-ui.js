@@ -28,6 +28,25 @@ document.addEventListener("DOMContentLoaded",()=>{
   const noticeNode=byId("notice");document.querySelector(".playback-panel").append(noticeNode);
   recordings.append(row);
   const player=byId("recordedAudio"),playRecording=iconButton("play","播放我的录音");playRecording.id="phonePlayRecording";
+  const recordingBoost=window.TextbookVolume?.createRecordingBoost(player);
+  if(recordingBoost&&(window.AudioContext||window.webkitAudioContext)){
+    const button=document.createElement("button");
+    button.type="button";
+    button.textContent="回放增强 +12 dB";
+    button.setAttribute("aria-pressed","false");
+    button.onclick=()=>{
+      try{
+        recordingBoost.set(!recordingBoost.enabled);
+        button.setAttribute("aria-pressed",String(recordingBoost.enabled));
+        button.textContent=recordingBoost.enabled?"回放增强已开启 · 点击关闭":"回放增强 +12 dB";
+      }catch{
+        button.disabled=true;
+        button.textContent="当前浏览器无法增强回放";
+      }
+    };
+    recordings.append(button);
+    player.addEventListener("play",recordingBoost.resume);
+  }
   const updatePlayback=()=>{
     const text=player.paused?"播放我的录音":"暂停我的录音";
     playRecording.replaceChildren();const symbol=document.createElement("i");symbol.dataset.lucide=player.paused?"play":"pause";
@@ -36,6 +55,7 @@ document.addEventListener("DOMContentLoaded",()=>{
   };
   playRecording.onclick=async()=>{
     if(isRecording()){notice("请先停止录音。");return;}
+    if(player.paused)recordingBoost?.resume();
     try{if(player.paused)await player.play();else player.pause();}catch(error){notice("录音暂时无法播放："+error.message);}
   };
   for(const event of ["play","pause","ended","emptied"])player.addEventListener(event,updatePlayback);
