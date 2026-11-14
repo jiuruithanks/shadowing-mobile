@@ -1,8 +1,8 @@
-const CACHE_NAME = "tokyo-shadowing-mobile-v84-textbook-volume";
+const CACHE_NAME = "tokyo-shadowing-mobile-v85-reference-volume";
 const BASE_URL = new URL("./", self.location.href);
 const APP_SHELL_PATHS = [
-  "textbook-phone-ui.js?v=volume-1",
-  "textbook-volume.js?v=1",
+  "textbook-phone-ui.js?v=volume-2",
+  "textbook-volume.js?v=2",
   "mobile.html",
   "mobile.css?v=20260916-02",
   "mobile-package.js?v=20260915-02",

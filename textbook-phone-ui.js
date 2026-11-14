@@ -17,7 +17,7 @@ document.addEventListener("DOMContentLoaded",()=>{
   const menuButton=iconButton("ellipsis","导入与导出");menuButton.id="phoneMenu";header.append(menuButton);
   menuButton.onclick=()=>TextbookTransfer.openHub().catch(error=>notice(error.message));
   if(window.TextbookVolume){
-    const volumeButton=iconButton("volume-2","播放音量"),volume=sheet("音量设置");
+    const volumeButton=iconButton("volume-2","教材播放音量"),volume=sheet("教材播放音量");
     volumeButton.id="phoneVolume";
     TextbookVolume.addControls(volume);
     volumeButton.onclick=()=>volume.showModal();
@@ -36,12 +36,8 @@ document.addEventListener("DOMContentLoaded",()=>{
   };
   playRecording.onclick=async()=>{
     if(isRecording()){notice("请先停止录音。");return;}
-    if(player.paused)window.TextbookVolume?.prepare(player);
     try{if(player.paused)await player.play();else player.pause();}catch(error){notice("录音暂时无法播放："+error.message);}
   };
-  for(const event of ["pointerup","keydown","play"]){
-    player.addEventListener(event,()=>window.TextbookVolume?.prepare(player));
-  }
   for(const event of ["play","pause","ended","emptied"])player.addEventListener(event,updatePlayback);
   document.querySelector(".playback-panel").append(playRecording);updatePlayback();
   const openRecordings=iconButton("ellipsis","录音下载与删除");openRecordings.id="phoneRecordings";

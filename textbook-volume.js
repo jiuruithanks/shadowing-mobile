@@ -46,13 +46,13 @@ window.TextbookVolume=(()=>{
     const controls=document.createElement("div");
     controls.className="textbook-volume";
     const label=document.createElement("label");
-    label.textContent="播放音量";
+    label.textContent="教材播放音量";
     const slider=document.createElement("input");
     slider.type="range";
     slider.min="0";
     slider.max="100";
     slider.step="1";
-    slider.setAttribute("aria-label","播放音量");
+    slider.setAttribute("aria-label","教材播放音量");
     const value=document.createElement("output");
     const refresh=()=>{slider.value=level;value.textContent=level+"%";};
     slider.oninput=()=>{
