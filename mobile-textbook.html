@@ -5,20 +5,21 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>教材跟读</title>
   <link rel="icon" href="favicon.svg">
-  <link rel="stylesheet" href="textbook.css?v=calibration-37">
+  <link rel="stylesheet" href="textbook.css?v=n3-mobile-1">
   <link rel="stylesheet" href="textbook-tags.css?v=2">
   <script defer src="textbook-assets/lucide.js"></script>
   <script defer src="mobile-package.js?v=20260924-01"></script>
-  <script defer src="textbook-package.js?v=sync-2"></script>
-  <script defer src="textbook-offline.js?v=1"></script>
+  <script defer src="textbook-package.js?v=n3-mobile-1"></script>
+  <script defer src="textbook-offline.js?v=n3-mobile-1"></script>
   
   <script defer src="textbook-tags.js?v=mobile-1"></script>
-  <script defer src="textbook-sync.js?v=calibration-37"></script>
-  <script defer src="textbook-calibration.js?v=calibration-37"></script>
+  <script defer src="textbook-sync.js?v=n3-mobile-1"></script>
+  <script defer src="textbook-calibration.js?v=calibration-81"></script>
+  <script defer src="mora-groups.js?v=1"></script>
   <link rel="stylesheet" href="textbook-sync.css?v=transfer-ui-3">
-  <script defer src="textbook.js?v=calibration-37"></script>
+  <script defer src="textbook.js?v=n3-mobile-1"></script>
   <link rel="stylesheet" href="textbook-mobile.css?v=1">
-  <script defer src="textbook-transfer.js?v=calibration-37"></script>
+  <script defer src="textbook-transfer.js?v=n3-mobile-1"></script>
   <script defer src="textbook-phone-ui.js?v=transfer-ui-3"></script>
 <link rel="manifest" href="manifest.webmanifest">
 </head>
@@ -47,10 +48,18 @@
       </div>
       <div class="prompt-band"><span id="kindLabel"></span><p id="exercisePrompt"></p><p id="exerciseNote" class="muted"></p></div>
       <div class="view-tools">
+        <button id="wholeListening" class="text-button" type="button" hidden><i data-lucide="headphones"></i><span>整题播放</span></button>
         <div class="segmented" role="group" aria-label="练习模式"><label><input type="radio" name="mode" value="full" checked>完整文本</label><label><input type="radio" name="mode" value="prompt">只看提示</label></div>
         <label><input type="checkbox" id="showRuby" checked> 注音</label><label><input type="checkbox" id="showChinese" checked> 中文</label>
         <span id="turnCount" class="muted"></span>
       </div>
+      <section id="textbookVoiceTools" class="textbook-voice-tools" aria-label="听力播放声音" hidden>
+        <div class="textbook-voice-actions">
+          <label for="textbookPlaybackVoice">播放声音</label>
+          <select id="textbookPlaybackVoice"><option value="original">教材原音</option><option value="mine">我的音色</option></select>
+        </div>
+        <p id="listeningVoiceStatus" role="status" hidden></p>
+      </section>
       <div id="turnList" aria-label="对话文本"></div>
       <div id="freeAnswer" hidden><label for="personalText">我的回答（日文）</label><textarea id="personalText" rows="5" maxlength="1000" placeholder="填写自己的情况"></textarea><button id="useAnswer" class="text-button"><i data-lucide="check"></i>使用这段回答</button></div>
       <div id="related" class="related"></div>

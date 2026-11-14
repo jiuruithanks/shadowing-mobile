@@ -12,6 +12,10 @@ window.TextbookTransfer=(()=>{
   window.addEventListener("beforeunload",event=>{if(busy){event.preventDefault();event.returnValue="";}});
   const context=()=>typeof state==="object"?state:null;
   const offline=()=>Boolean(window.TextbookOffline)||location.pathname.includes("mobile-textbook");
+  const listeningCourse=id=>id==="n3-listening-01";
+  const courseLabel=(id,lesson)=>listeningCourse(id)?"N3 听力跟读":
+    "第 "+(lesson?.number||Number(id.slice(-2)))+" 课"+(lesson?" · "+lesson.title:"");
+  const practiceFilename=scope=>(listeningCourse(scope)?"N3听力练习":"教材练习-"+(scope==="all"?"全部":scope.slice(-2)))+"-"+Date.now()+".textbook-practice";
   const report=text=>{if(typeof notice==="function")notice(text);else{const node=document.getElementById("libraryStatus");if(node)node.textContent=text;}};
   const checkIdle=()=>{if(typeof isRecording==="function"&&isRecording())throw new Error("请先结束录音并保存。");if(context()?.analysisWork?.size)throw new Error("请等本句分析保存完成后再同步。");if(busy)throw new Error("正在处理，请稍候。");};
   const noteKeys=lesson=>lesson.items.flatMap(i=>["note:"+i.id,"answer:"+i.id,"done:"+i.id,...i.turns.map((_,n)=>"turnDone:"+i.id+":"+n)]);
@@ -81,8 +85,10 @@ window.TextbookTransfer=(()=>{
     if(backupRow){
       // A historical backup is an explicit restore candidate, never an implicit overwrite.
       for(const [key,value] of Object.entries(backupRow.values)){
-        const field=key.replace(/^textbook-v1:/,"");if(!/^(note|answer):/.test(field))continue;
-        const id="field:"+field;if(!docs[id])docs[id]={kind:"field",key:field,lessonId:"dekiru-2e-intermediate-"+(/^l(\d{2})-/.exec(field.split(":")[1])?.[1]||"01"),value,
+        const field=key.replace(/^(textbook-v1:|n3-listening:)/,"");if(!/^(note|answer):/.test(field))continue;
+        const lessonId=TextbookSync.courseId({exercise:field.split(":")[1]});
+        if(scope!=="all"&&scope!==lessonId)continue;
+        const id="field:"+field;if(!docs[id])docs[id]={kind:"field",key:field,lessonId,value,
           rev:"backup:"+await TextbookSync.hash([id,value]),ancestors:[],updated:backupRow.created};
       }
       const tags=JSON.parse(backupRow.values["textbook-v1:sentenceTags:v1"]||'{"tags":[],"sentences":[]}');
@@ -112,7 +118,7 @@ window.TextbookTransfer=(()=>{
     try{
       ticket=await window.desktopSession?.begin();
       const blob=await packPractice(scope);
-      await persistExport(blob,"教材练习-"+(scope==="all"?"全部":scope.slice(-2))+"-"+Date.now()+".textbook-practice",report);
+      await persistExport(blob,practiceFilename(scope),report);
       report(offline()?"练习记录已导出，可到电脑的“导入与导出 → 我的练习”中导入。":"练习记录已保存，可在“导入与导出 → 文件与历史”中查看。");
     }finally{busy=false;await window.desktopSession?.end(ticket);}
   }
@@ -129,7 +135,8 @@ window.TextbookTransfer=(()=>{
     section.className="transfer-section";section.append(el("h3","导出我的练习"));
     scope.setAttribute("aria-label","导出范围");scope.append(new Option("全部课程（含未对应录音）","all"));
     const lessons=await courses();
-    for(const lesson of lessons)scope.append(new Option(`第 ${lesson.number} 课 · ${lesson.title}`,lesson.id));
+    for(const lesson of lessons)scope.append(new Option(courseLabel(lesson.id,lesson),lesson.id));
+    if(listeningCourse(context()?.lesson?.id))scope.value=context().lesson.id;
     label.append(scope);section.append(label,start,status);status.setAttribute("role","status");container.append(section);
     const incoming=el("section"),choose=actionButton("upload","导入练习记录");incoming.className="transfer-section";
     incoming.append(el("h3","导入另一台设备的练习"),el("p","选择导出的练习文件。导入前会显示变更，有冲突时由你选择保留哪一份。"),choose);container.append(incoming);
@@ -138,7 +145,7 @@ window.TextbookTransfer=(()=>{
       start.disabled=true;scope.disabled=true;node.dataset.processing="true";
       let ticket;
       try{checkIdle();busy=true;ticket=await window.desktopSession?.begin();const blob=await packPractice(scope.value,text=>status.textContent=text);
-        const result=await persistExport(blob,"教材练习-"+(scope.value==="all"?"全部":scope.value.slice(-2))+"-"+Date.now()+".textbook-practice",text=>status.textContent=text);
+        const result=await persistExport(blob,practiceFilename(scope.value),text=>status.textContent=text);
         status.textContent=result?"已保存，可在“文件与历史”中查看。\n"+result.path:"练习记录已导出，可在另一台设备导入。";
       }catch(error){status.textContent=error.message;}finally{busy=false;node.dataset.processing="false";start.disabled=false;scope.disabled=false;await window.desktopSession?.end(ticket);}
     };window.lucide?.createIcons();
@@ -185,6 +192,7 @@ window.TextbookTransfer=(()=>{
       for(const lesson of state.lessons)lesson.items.forEach(readPersonal);
       if(state.turn>=itemTurns().length)state.turn=0;
       await loadRecordingIndex();if(state.item)await loadTakes(state.item.id);renderNav();renderTurns();
+      if(typeof refreshListeningVoiceStatus==="function")refreshListeningVoiceStatus(true);
       if(state.item){$("noteText").value=read("note:"+state.item.id);$("personalText").value=read("answer:"+state.item.id);}
     }
     report(`同步完成：更新 ${result.updated} 项，删除 ${result.deleted} 项，保持 ${result.skipped} 项。替换前的数据已保留在本机备份。`);return result;
@@ -199,7 +207,7 @@ window.TextbookTransfer=(()=>{
         ...(payload.study?.tags?.sentences||[]).map(s=>s.lessonId)].filter(Boolean))].sort();
       const scope=await new Promise(resolve=>{
         const node=dialog("导入练习记录"),select=el("select"),next=actionButton("arrow-right","查看导入预览");select.setAttribute("aria-label","导入范围");
-        select.append(new Option("包内全部课程","all"));for(const id of ids){const lesson=context()?.lessons.find(l=>l.id===id);select.append(new Option(`第 ${Number(id.slice(-2))} 课${lesson?" · "+lesson.title:""}`,id));}
+        select.append(new Option("包内全部课程","all"));for(const id of ids){const lesson=context()?.lessons.find(l=>l.id===id);select.append(new Option(courseLabel(id,lesson),id));}
         next.onclick=()=>{node.returnValue="next";node.close();resolve(select.value);};node.addEventListener("close",()=>{if(node.returnValue!=="next")resolve(null);});
         node.append(el("p","选择要同步的课程。下一步先查看变更，不会立即覆盖本机数据。"),select,next);window.lucide?.createIcons();node.showModal();
       });
@@ -210,7 +218,7 @@ window.TextbookTransfer=(()=>{
         if(payload.calibrations)payload.calibrations=payload.calibrations.filter(t=>t.value.lessonId===scope);
         if(payload.sync)payload.sync.docs=Object.fromEntries(Object.entries(payload.sync.docs).filter(([,doc])=>!doc.lessonId||doc.lessonId===scope));
         if(payload.study){
-          payload.study.values=Object.fromEntries(Object.entries(payload.study.values||{}).filter(([key])=>scope.endsWith(/^l(\d{2})-/.exec(key.split(":")[1])?.[1]||"01")));
+          payload.study.values=Object.fromEntries(Object.entries(payload.study.values||{}).filter(([key])=>TextbookSync.courseId({exercise:key.split(":")[1]})===scope));
           if(payload.study.tags)payload.study.tags.sentences=payload.study.tags.sentences.filter(s=>s.lessonId===scope);
         }
       }
@@ -304,7 +312,7 @@ window.TextbookTransfer=(()=>{
         if(row)window.dispatchEvent(new CustomEvent("textbook-course-imported",{detail:row}));
       }catch(e){status.textContent=e.name==="QuotaExceededError"?"手机存储空间不足，原教材未改动。":e.message;}
       finally{busy=false;node.dataset.processing="false";}
-      if(row&&context()?.lesson)location.href="mobile-textbook.html?lesson="+row.course.number;
+      if(row&&context()?.lesson)location.href="mobile-textbook.html?"+(listeningCourse(row.id)?"practice=listening":"lesson="+row.course.number);
     };input.click();
   }
   async function openHub(selected="practice",expanded=false){
@@ -320,10 +328,13 @@ window.TextbookTransfer=(()=>{
         if(key==="practice")await renderPractice(content,node);
         else if(key==="history")await renderHistory(content,node,expanded);
         else if(offline()){
-          content.append(el("p","添加电脑导出的教材，包含课文、注音和标准配音，导入后可离线使用。"));
+          content.append(el("p","添加电脑导出的教材或 N3 听力包，导入后可离线使用。"));
           const add=actionButton("file-up","添加教材"),status=el("p"),library=el("a","查看我的教材");status.setAttribute("role","status");library.href="mobile-textbook-library.html";library.className="transfer-library";
           add.onclick=()=>{try{chooseCourse(node,status);}catch(e){status.textContent=e.message;}};content.append(add,library,status);
-        }else{content.append(el("p","把当前整课的课文、注音和标准配音带到手机。不包含你的录音和笔记。"));await exportCourse(content);}
+        }else{
+          if(!listeningCourse(context()?.lesson?.id))content.append(el("p","把当前整课的课文、注音和标准配音带到手机。"));
+          await exportCourse(content);
+        }
         window.lucide?.createIcons();
       }catch(e){content.append(el("p",e.message));}
     };
@@ -338,6 +349,7 @@ window.TextbookTransfer=(()=>{
   }
   async function exportCourse(container=null){
     checkIdle();if(!container)return openHub("material");if(!context()?.lesson)throw new Error("请先选择要导出的课程。");
+    if(listeningCourse(state.lesson.id)){renderListeningExport(container,state.lesson);return;}
     const lesson=state.lesson,node=container.closest("dialog"),title=el("h3",`第 ${lesson.number} 课 · ${lesson.title}`),progress=el("p");progress.setAttribute("role","status");
     const images=el("input");images.type="checkbox";const label=el("label");label.append(images," 包含教材原页");
     const summary=el("p",`整课 · ${lesson.items.length} 个练习 · ${lesson.items.reduce((n,item)=>n+availableTurns(item).length,0)} 句`);
@@ -390,11 +402,66 @@ window.TextbookTransfer=(()=>{
       }catch(e){progress.textContent=e.message;}finally{busy=false;node.dataset.processing="false";start.disabled=false;images.disabled=false;await window.desktopSession?.end(ticket);}
     };
   }
+  function renderListeningExport(container,lesson){
+    const node=container.closest("dialog"),scope=el("select"),progress=el("p");
+    scope.setAttribute("aria-label","听力导出范围");
+    scope.append(new Option("全部 7 回","all"),...lesson.units.map(unit=>new Option(unit,unit)));
+    progress.setAttribute("role","status");
+    const start=actionButton("smartphone","导出 N3 手机版");
+    container.append(el("p","带上教材原音和本机已生成的「我的音色」。你的跟读录音可在「我的练习」互导。"),scope,start,progress);
+    start.onclick=async()=>{
+      let ticket;
+      try{
+        checkIdle();busy=true;node.dataset.processing="true";start.disabled=true;scope.disabled=true;
+        ticket=await window.desktopSession?.begin();
+        const course=structuredClone(lesson),selection=scope.value;
+        if(selection!=="all")course.items=course.items.filter(item=>item.unit===selection);
+        course.units=lesson.units.filter(unit=>course.items.some(item=>item.unit===unit));
+        const turns=course.items.flatMap(item=>item.turns);
+        progress.textContent="正在查找已换声的句子…";
+        const voice=await api("/api/my-voice/reference-statuses",{
+          reference_filenames:turns.map(turn=>turn.reference),...TextbookVoicePlayback.settings()
+        });
+        const files=new Map();let prepared=0,converted=0;
+        async function addAudio(url,type){
+          const response=await fetch(url);
+          if(!response.ok)throw new Error("无法读取音频，请刷新后重试。");
+          const blob=new Blob([await response.blob()],{type});
+          const path="audio/"+await ShadowingPackage.sha256Blob(blob);
+          files.set(path,blob);return path;
+        }
+        for(const item of course.items){
+          item.offlineTrack=await addAudio(item.track,"audio/mpeg");
+          delete item.track;
+          for(const turn of item.turns){
+            turn.offlineAudio=await addAudio((await audioFor(turn)).audio_url,"audio/wav");
+            const url=voice.audio_urls?.[turn.reference];
+            if(url){
+              turn.offlineMyVoice=await addAudio(url,"audio/wav");
+              converted++;
+            }
+            const tokens=Array.from((turn.ruby||turn.ja).matchAll(/\{([^|}]+)\|([^}]+)\}|[^{}]+/g),
+              ([surface,base,reading])=>({surface:base||surface,reading:reading||surface}));
+            turn.offlineTokens=tokens.map(token=>token.surface).join("").normalize("NFKC").trim()===turn.ja.normalize("NFKC").trim()
+              ? tokens : (await api("/api/kana",{text:turn.ja})).tokens;
+            progress.textContent="准备句子 "+(++prepared)+"/"+turns.length;
+          }
+        }
+        TextbookPackage.validateCourse(course,files);
+        const blob=await TextbookPackage.pack(TextbookPackage.FORMAT,{course,voices:[]},files,
+          (n,total)=>progress.textContent="打包音频 "+n+"/"+total);
+        const name="N3听力-"+(selection==="all"?"第1-7回":selection)+"-"+Date.now()+".textbook";
+        const result=await persistExport(blob,name,text=>progress.textContent=text);
+        progress.textContent="已导出 "+turns.length+" 句教材原音、"+converted+" 句我的音色。\n"+result.path;
+      }catch(error){progress.textContent=error.message;}
+      finally{busy=false;node.dataset.processing="false";start.disabled=false;scope.disabled=false;await window.desktopSession?.end(ticket);}
+    };
+  }
   document.addEventListener("DOMContentLoaded",()=>{
     const nav=document.querySelector(".app-header nav");
     if(nav&&!offline()){
       const button=actionButton("arrow-down-up","导入与导出");button.id="textbookTransfer";
-      button.onclick=()=>openHub().catch(e=>report(e.message));nav.append(button);window.lucide?.createIcons();
+      button.onclick=()=>openHub(listeningCourse(context()?.lesson?.id)?"material":"practice").catch(e=>report(e.message));nav.append(button);window.lucide?.createIcons();
     }
     TextbookSync.ready().catch(e=>report("数据备份未完成："+e.message));
   });

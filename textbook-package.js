@@ -65,19 +65,23 @@ window.TextbookPackage=(()=>{
     });
   }
   function validateCourse(course,files){
-    check(course&&typeof course.id==="string"&&/^dekiru-2e-intermediate-\d{2}$/.test(course.id),"课程编号无效");
+    const listening=course?.id==="n3-listening-01";
+    check(course&&typeof course.id==="string"&&(listening||/^dekiru-2e-intermediate-\d{2}$/.test(course.id)),"课程编号无效");
     check(Number.isInteger(course.number)&&course.number>0&&typeof course.title==="string","课程信息无效");
-    check(course.id===`dekiru-2e-intermediate-${String(course.number).padStart(2,"0")}`,"课程编号与名称不一致");
+    check(listening?course.number===1:course.id===`dekiru-2e-intermediate-${String(course.number).padStart(2,"0")}`,"课程编号与名称不一致");
+    const hasAudio=path=>files.get(path)?.type.startsWith("audio/");
     check(Array.isArray(course.units)&&course.units.every(x=>typeof x==="string"),"课程分类无效");
     check(Array.isArray(course.items)&&course.items.length>0&&course.items.length<=2000,"练习列表无效");
     const ids=new Set();
     for(const item of course.items){
       check(typeof item.id==="string"&&!ids.has(item.id)&&Array.isArray(item.turns),"练习编号无效或重复");ids.add(item.id);
       check(typeof item.title==="string"&&course.units.includes(item.unit)&&Array.isArray(item.related),"练习内容无效");
+      if(listening)check(/^n3-a\d{2}$/.test(item.id)&&hasAudio(item.offlineTrack),"听力原音缺失");
       if(item.image)check(files.has(item.image)&&files.get(item.image).type.startsWith("image/"),"原页图片缺失");
       for(const turn of item.turns){
         check(typeof turn.ja==="string"&&typeof turn.zh==="string"&&typeof turn.role==="string","句子内容无效");
-        check(turn.offlineAudio&&files.has(turn.offlineAudio)&&files.get(turn.offlineAudio).type.startsWith("audio/"),"句子音频缺失");
+        check(hasAudio(turn.offlineAudio),"句子音频缺失");
+        if(turn.offlineMyVoice)check(listening&&hasAudio(turn.offlineMyVoice),"我的音色音频缺失");
         check(Array.isArray(turn.offlineTokens)&&turn.offlineTokens.every(t=>typeof t.surface==="string"&&typeof t.reading==="string"),"注音缺失");
         // The kana service normalizes compatibility characters before tokenizing.
         check(turn.offlineTokens.map(t=>t.surface).join("").normalize("NFKC").trim()===turn.ja.normalize("NFKC").trim(),"注音与原文不符");
@@ -86,7 +90,7 @@ window.TextbookPackage=(()=>{
   }
   async function importCourse(file,progress=()=>{}){
     const {payload,files}=await unpack(file,FORMAT,progress);validateCourse(payload?.course,files);
-    check(Array.isArray(payload.voices)&&payload.voices.length>0,"缺少音色信息");
+    check(Array.isArray(payload.voices)&&(payload.course.id==="n3-listening-01"||payload.voices.length>0),"缺少音色信息");
     progress(0,1,"检查本机存储");
     const estimate=await optionalStorage("estimate");
     if(estimate?.quota)check(estimate.quota-estimate.usage>file.size*1.15,"本机空间不足，请先删除不需要的课程。");
@@ -97,7 +101,11 @@ window.TextbookPackage=(()=>{
     const items=new Map((existing?.course.items||[]).map(i=>[i.id,i]));payload.course.items.forEach(i=>items.set(i.id,i));
     const mergedFiles={...existing?.files,...Object.fromEntries(files)};
     const course={...payload.course,items:[...items.values()]};
-    const used=new Set(course.items.flatMap(i=>[i.image,...i.turns.map(t=>t.offlineAudio)]).filter(Boolean));
+    if(course.id==="n3-listening-01"){
+      course.items.sort((a,b)=>a.id.localeCompare(b.id));
+      course.units=[...new Set(course.items.map(item=>item.unit))];
+    }
+    const used=new Set(course.items.flatMap(i=>[i.image,i.offlineTrack,...i.turns.flatMap(t=>[t.offlineAudio,t.offlineMyVoice])]).filter(Boolean));
     const kept=Object.fromEntries(Object.entries(mergedFiles).filter(([key])=>used.has(key)));
     const row={id:course.id,course,voices:payload.voices,files:kept,updated:Date.now(),size:Object.values(kept).reduce((n,b)=>n+b.size,0)};
     progress(0,1,"正在保存课程到本机，请保持页面打开");

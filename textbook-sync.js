@@ -1,6 +1,8 @@
 "use strict";
 window.TextbookSync=(()=>{
-  const PREFIX="textbook-v1:",VERSION=2,DB="textbook-shadowing";
+  const PREFIX="textbook-v1:",LISTENING_PREFIX="n3-listening:",VERSION=2,DB="textbook-shadowing";
+  const lessonIdPattern=/^(?:dekiru-2e-intermediate-\d{2}|n3-listening-01)$/;
+  const practicePrefix=lessonId=>lessonId==="n3-listening-01"?LISTENING_PREFIX:PREFIX;
   let opening;
   const clone=value=>structuredClone(value);
   function stable(value){
@@ -33,25 +35,89 @@ window.TextbookSync=(()=>{
       try{action(tx,value=>{result=value;});}catch(error){tx.abort();reject(error);}
     });
   }
-  const get=(store,key)=>transact([store],"readonly",(tx,out)=>{const r=tx.objectStore(store).get(key);r.onsuccess=()=>out(r.result);});
-  const all=store=>transact([store],"readonly",(tx,out)=>{const r=tx.objectStore(store).getAll();r.onsuccess=()=>out(r.result);});
-  const calibrations=async()=>(await all("syncState")).filter(row=>row.id.startsWith("calibration:")).map(row=>row.template);
+  const rawGet=(store,key)=>transact([store],"readonly",(tx,out)=>{const r=tx.objectStore(store).get(key);r.onsuccess=()=>out(r.result);});
+  const rawAll=store=>transact([store],"readonly",(tx,out)=>{const r=tx.objectStore(store).getAll();r.onsuccess=()=>out(r.result);});
+  const analysisId=id=>"analysis:"+id;
+  async function hydrateRecordings(rows){
+    if(!rows.length)return rows;
+    return transact(["syncState"],"readonly",(tx,out)=>{
+      const result=rows.slice(),store=tx.objectStore("syncState");out(result);
+      rows.forEach((take,index)=>{
+        const request=store.get(analysisId(take.id));
+        request.onsuccess=()=>{
+          const edit=request.result;if(!edit||edit.created!==take.created)return;
+          result[index]={...take,sentence:edit.sentence,analysis:edit.analysis};
+          if(edit.referenceKey){
+            const audio=store.get(edit.referenceKey);
+            audio.onsuccess=()=>{if(audio.result)result[index].referenceBlob=new Blob([audio.result.bytes],{type:audio.result.type});};
+          }
+        };
+      });
+    });
+  }
+  async function get(store,key){const row=await rawGet(store,key);return store==="recordings"&&row?(await hydrateRecordings([row]))[0]:row;}
+  async function all(store){const rows=await rawAll(store);return store==="recordings"?hydrateRecordings(rows):rows;}
+  async function prepareAnalysisAudio(take,analysis){
+    const [original,edit]=await Promise.all([rawGet("recordings",take.id),rawGet("syncState",analysisId(take.id))]);
+    if(!original||original.created!==take.created)return null;
+    const filename=analysis?.reference?.filename;
+    if(edit?.created===take.created&&edit.analysis?.reference?.filename===filename)return edit.referenceKey||null;
+    if(original.referenceBlob&&original.analysis?.reference?.filename===filename)return null;
+    if(!take.referenceBlob?.size)return null;
+    const key="analysis-audio:"+JSON.stringify([take.id,take.created,filename||""]);
+    if(!await rawGet("syncState",key)){
+      const bytes=await take.referenceBlob.arrayBuffer(),type=take.referenceBlob.type;
+      await transact(["recordings","syncState"],"readwrite",tx=>{
+        const request=tx.objectStore("recordings").get(take.id);
+        request.onsuccess=()=>{if(request.result?.created===take.created)tx.objectStore("syncState").put({id:key,bytes,type});};
+      });
+    }
+    return key;
+  }
+  async function referenceAudio(take,analysis){
+    const filename=analysis?.reference?.filename;
+    if(!filename||take.analysis?.reference?.filename===filename)if(take.referenceBlob?.size)return take.referenceBlob;
+    const key="analysis-audio:"+JSON.stringify([take.id,take.created,filename||""]);
+    const row=await rawGet("syncState",key);
+    if(row)return new Blob([row.bytes],{type:row.type});
+    const original=await rawGet("recordings",take.id);
+    if(original?.analysis?.reference?.filename===filename)return original.referenceBlob||null;
+    return null;
+  }
+  async function calibrations(){
+    const rows=await rawAll("syncState"),byId=new Map(rows.map(row=>[row.id,row]));
+    return rows.filter(row=>row.id.startsWith("calibration:")).map(row=>{
+      const template=row.template,audio=byId.get(template.audioKey);
+      return audio?{value:template.value,blob:new Blob([audio.bytes],{type:audio.type})}:template;
+    });
+  }
   async function saveCalibration(template,replace=true){
     validateCalibration(template.value);
     if(!(template.blob instanceof Blob)||await ShadowingPackage.sha256Blob(template.blob)!==template.value.audioHash)throw new Error("校准样本音频校验失败");
+    const audioKey="calibration-audio:"+template.value.audioHash;
+    const audio=await rawGet("syncState",audioKey);
+    const bytes=audio?null:await template.blob.arrayBuffer();
     return transact(["syncState"],"readwrite",tx=>{
       const store=tx.objectStore("syncState"),id="calibration:"+template.value.key,r=store.get(id);
-      r.onsuccess=()=>{if(replace||!r.result)store.put({id,template});};
+      r.onsuccess=()=>{
+        const old=r.result?.template?.value;
+        // Recovery and delayed saves must not overwrite a more recent manual edit or undo.
+        const fresh=!old||(template.value.updated||template.value.created)>=(old.updated||old.created);
+        if(!old||replace&&fresh){
+          if(!audio)store.put({id:audioKey,bytes,type:template.blob.type});
+          store.put({id,template:{value:template.value,audioKey}});
+        }
+      };
     });
   }
   const lock=action=>navigator.locks?navigator.locks.request("textbook-practice-sync",action):action();
   function localSnapshot(){
-    const values={};for(let n=0;n<localStorage.length;n++){const key=localStorage.key(n);if(key?.startsWith(PREFIX))values[key]=localStorage.getItem(key);}
+    const values={};for(let n=0;n<localStorage.length;n++){const key=localStorage.key(n);if(key?.startsWith(PREFIX)||key?.startsWith(LISTENING_PREFIX))values[key]=localStorage.getItem(key);}
     return values;
   }
   function writeLocal(values){
     for(const [key,value] of Object.entries(values)){
-      if(!key.startsWith(PREFIX))throw new Error("设置路径无效");
+      if(!key.startsWith(PREFIX)&&!key.startsWith(LISTENING_PREFIX))throw new Error("设置路径无效");
       if(value===null)localStorage.removeItem(key);else localStorage.setItem(key,value);
     }
     window.dispatchEvent(new Event("textbook-tags-changed"));
@@ -72,7 +138,10 @@ window.TextbookSync=(()=>{
       await transact(["syncState"],"readwrite",tx=>tx.objectStore("syncState").put({id:"initialized",created:Date.now()}));
     }
   }
-  function lessonForExercise(id){return /^l(\d{2})-/.test(id)?"dekiru-2e-intermediate-"+id.slice(1,3):"dekiru-2e-intermediate-01";}
+  function lessonForExercise(id){
+    if(/^n3-a\d{2}$/.test(id))return "n3-listening-01";
+    return /^l(\d{2})-/.test(id)?"dekiru-2e-intermediate-"+id.slice(1,3):"dekiru-2e-intermediate-01";
+  }
   function sentenceKey(take){
     const s=take.sentence;
     return s?JSON.stringify([s.lessonId,take.exercise||s.exerciseId,s.index,s.role,s.text]):"unmatched:"+take.id;
@@ -94,7 +163,7 @@ window.TextbookSync=(()=>{
     await ensure();const stored=await get("syncState","ledger"),docs=stored?.docs||{},observed={};
     const put=(kind,key,lessonId,value)=>observed[kind+":"+key]={kind,key,lessonId,value};
     for(const [key,value] of Object.entries(localSnapshot())){
-      const name=key.slice(PREFIX.length);
+      const name=key.replace(/^(?:textbook-v1:|n3-listening:)/,"");
       if(/^(note|answer|importedVariants:(?:note|answer)):/.test(name)){
         const exercise=name.slice(name.indexOf(":")+1).replace(/^(note|answer):/,"");
         put("field",name,lessonForExercise(exercise),value||null);
@@ -128,7 +197,7 @@ window.TextbookSync=(()=>{
   }
   function validateDoc(doc){
     if(!doc||!["take","field","tag","labels","calibration"].includes(doc.kind)||typeof doc.key!=="string"||doc.key.length>12000||
-      typeof doc.lessonId!=="string"||!/^$|^dekiru-2e-intermediate-\d{2}$/.test(doc.lessonId)||
+      typeof doc.lessonId!=="string"||doc.lessonId!==""&&!lessonIdPattern.test(doc.lessonId)||
       typeof doc.rev!=="string"||!Array.isArray(doc.ancestors)||doc.ancestors.length>20000||!doc.ancestors.every(x=>typeof x==="string")||
       doc.aliases&&(!Array.isArray(doc.aliases)||doc.aliases.length>20000||!doc.aliases.every(x=>typeof x==="string")))throw new Error("同步记录格式无效");
     const value=doc.value;if(value===null)return;
@@ -142,12 +211,22 @@ window.TextbookSync=(()=>{
       value.sentence&&(!Number.isInteger(value.sentence.index)||value.sentence.index<0||typeof value.sentence.text!=="string"||typeof value.sentence.role!=="string")))throw new Error("录音清单无效");
   }
   function validateCalibration(value){
-    if(!value||!["reference","recording"].includes(value.track)||!/^dekiru-2e-intermediate-\d{2}$/.test(value.lessonId)||
+    if(!value||!["reference","recording"].includes(value.track)||!lessonIdPattern.test(value.lessonId)||
       typeof value.text!=="string"||!value.text||value.text.length>5000||!Number.isFinite(value.duration)||value.duration<=0||value.duration>120||
       !/^[a-f0-9]{64}$/.test(value.audioHash)||!Array.isArray(value.moras)||!value.moras.length||value.moras.length>1000||
       !Number.isFinite(value.created)||value.key!==JSON.stringify([value.track,value.audioHash,value.text]))throw new Error("校准样本格式无效");
+    if(value.updated!==undefined&&(!Number.isFinite(value.updated)||value.updated<0))throw new Error("校准更新时间无效");
     for(const [index,m] of value.moras.entries())if(m.index!==index||typeof m.text!=="string"||typeof m.confirmed!=="boolean"||typeof m.discarded!=="boolean"||
       m.confirmed&&(!Number.isFinite(m.start)||!Number.isFinite(m.end)||m.start<0||m.end<=m.start||m.end>value.duration+.01))throw new Error("校准音拍区间无效");
+    if(value.groups!==undefined){
+      if(!Array.isArray(value.groups)||value.groups.length>value.moras.length/2)throw new Error("校准音拍分组无效");
+      const used=new Set();
+      for(const g of value.groups){
+        if(!g||!Number.isInteger(g.start_index)||!Number.isInteger(g.end_index)||g.start_index<0||g.end_index>=value.moras.length||g.end_index<=g.start_index||
+          typeof g.confirmed!=="boolean"||typeof g.discarded!=="boolean"||g.confirmed&&(!Number.isFinite(g.start)||!Number.isFinite(g.end)||g.start<0||g.end<=g.start||g.end>value.duration+.01))throw new Error("校准音拍分组区间无效");
+        for(let i=g.start_index;i<=g.end_index;i++){if(used.has(i))throw new Error("校准音拍分组重复");used.add(i);}
+      }
+    }
     if(value.pauses!==undefined){
       if(!Array.isArray(value.pauses)||value.pauses.length>1000)throw new Error("校准停顿清单无效");
       const used=new Set();
@@ -241,7 +320,7 @@ window.TextbookSync=(()=>{
       }
       const values={},tags={version:1,tags:[],sentences:[]};
       for(const doc of Object.values(docs)){
-        if(doc.kind==="field")values[PREFIX+doc.key]=doc.value;
+        if(doc.kind==="field")values[practicePrefix(doc.lessonId)+doc.key]=doc.value;
         if(doc.kind==="tag"&&doc.value)tags.tags.push(doc.value);
       }
       const tagIds=new Set(tags.tags.map(t=>t.id));
@@ -253,8 +332,8 @@ window.TextbookSync=(()=>{
       // Commit audio and a replayable localStorage journal together; interrupted imports resume on the next open.
       await transact(["recordings","syncState"],"readwrite",tx=>{
         const store=tx.objectStore("recordings"),previous=new Map(fresh.rows.map(row=>[row.id,row]));
-        for(const row of fresh.rows)if(!rows.has(row.id))store.delete(row.id);
-        for(const row of rows.values())if(previous.get(row.id)!==row)store.put(row);
+        for(const row of fresh.rows)if(!rows.has(row.id)){store.delete(row.id);tx.objectStore("syncState").delete(analysisId(row.id));}
+        for(const row of rows.values())if(previous.get(row.id)!==row){store.put(row);tx.objectStore("syncState").delete(analysisId(row.id));}
         for(const action of chosen.filter(a=>a.incoming.kind==="calibration")){
           const id="calibration:"+action.incoming.key;
           if(action.incoming.value)tx.objectStore("syncState").put({id,template:clone(plan.byCalibration.get(action.incoming.key))});
@@ -270,20 +349,45 @@ window.TextbookSync=(()=>{
       await capture();
       if(matches.length)await backup("重新录制前保留旧录音",matches);
       if(matches.length){take.id=matches[0].id;take.exercise=matches[0].exercise;}
-      await transact(["recordings"],"readwrite",tx=>{
-        const store=tx.objectStore("recordings");for(const old of matches)store.delete(old.id);store.put(take);
+      await transact(["recordings","syncState"],"readwrite",tx=>{
+        const store=tx.objectStore("recordings");for(const old of matches){store.delete(old.id);tx.objectStore("syncState").delete(analysisId(old.id));}
+        store.put(take);tx.objectStore("syncState").delete(analysisId(take.id));
       });
       await capture();return take;
     });
   }
+  async function overwriteRecordingAudio(take,blob,analysis=null,{referenceKey=null}={}){
+    if(!(blob instanceof Blob)||!blob.size)throw new Error("录音为空");
+    return lock(async()=>{
+      const database=await db();
+      return new Promise((resolve,reject)=>{
+        const tx=database.transaction(["recordings","syncState"],"readwrite"),store=tx.objectStore("recordings");
+        let updated,error;
+        const timer=setTimeout(()=>{error=new Error("保存录音超时，原录音未改动");tx.abort();},15000);
+        tx.oncomplete=()=>{clearTimeout(timer);resolve(updated);};
+        tx.onabort=()=>{clearTimeout(timer);reject(error||tx.error||new Error("保存录音已中止"));};
+        tx.onerror=()=>{error ||= tx.error;};
+        const request=store.get(take.id);
+        request.onsuccess=()=>{
+          if(!request.result||request.result.created!==take.created){error=new Error("录音已被替换，请重新打开分析");tx.abort();return;}
+          try {
+            updated={...request.result,blob,sentence:take.sentence,created:Math.max(Date.now(),take.created+1),analysis};
+            store.put(updated);
+            if(referenceKey)tx.objectStore("syncState").put({id:analysisId(take.id),created:updated.created,sentence:take.sentence,analysis,referenceKey});
+            else tx.objectStore("syncState").delete(analysisId(take.id));
+          }catch(cause){error=cause;tx.abort();}
+        };
+      });
+    });
+  }
   async function deleteRecording(id,guard=()=>{}){return lock(async()=>{
     await capture();const old=await get("recordings",id);if(!old)return;guard(old);
-    await backup("删除录音前",[old]);await transact(["recordings"],"readwrite",tx=>{
+    await backup("删除录音前",[old]);await transact(["recordings","syncState"],"readwrite",tx=>{
       const store=tx.objectStore("recordings"),r=store.get(id);r.onsuccess=()=>{
-        try{if(r.result){guard(r.result);store.delete(id);}}catch{tx.abort();}
+        try{if(r.result){guard(r.result);store.delete(id);tx.objectStore("syncState").delete(analysisId(id));}}catch{tx.abort();}
       };
     });await capture();
   });}
   async function ready(){return lock(capture);}
-  return {db,all,backup,ready,capture,prepare,apply,replaceRecording,deleteRecording,sentenceKey,courseId,cleanAnalysis,hash,json,lock,calibrations,saveCalibration};
+  return {db,all,hydrateRecordings,prepareAnalysisAudio,referenceAudio,backup,ready,capture,prepare,apply,replaceRecording,overwriteRecordingAudio,deleteRecording,sentenceKey,courseId,cleanAnalysis,hash,json,lock,calibrations,saveCalibration};
 })();

@@ -2,17 +2,18 @@
 const $ = id => document.getElementById(id);
 const audio = $("referenceAudio");
 const markedMode=document.body.dataset.practice==="marked";
+const listeningMode=!markedMode&&new URLSearchParams(location.search).get("practice")==="listening";
 $("doneButton")?.remove();
 const state = {
   lesson:null, lessons:[], catalog:[], item:null, unit:"找兼职", turn:0, playing:false, pending:false, loop:false,
-  epoch:0, voices:[], cache:new Map(), kana:new Map(), loadedKey:"",
+  epoch:0, voices:[], cache:new Map(), kana:new Map(), loadedKey:"", listeningWhole:false,
   recorder:null, stream:null, recordingPending:false, recordingSaving:false, recordTimer:null, recordingMeter:null,
   recordingUrl:"", takes:[], db:null, synthesis:null, previewEpoch:0, previewing:false, previewKey:"",
   voiceGroups:new Map(), lessonVoices:new Map(), voiceProfiles:null, voiceDraft:null,
   analysisEpoch:0, analysisWork:new Map(), analysisView:null, analysisFrameReady:false, analysisEditQueue:Promise.resolve(),
   recordingIndex:new Map(), recordingLoaded:new Set(), recordingIndexStatus:"loading", navMode:"unit"
 };
-const prefix = "textbook-v1:";
+const prefix = listeningMode?"n3-listening:":"textbook-v1:";
 function read(key, fallback="") {
   try { return localStorage.getItem(prefix+key) ?? fallback; } catch { return fallback; }
 }
@@ -254,22 +255,15 @@ function indexRecording(take) {
 async function loadRecordingIndex() {
   state.recordingIndexStatus="loading";
   try {
-    const db=await state.db,index=new Map();
+    const index=new Map();
     // Retain only sentence identities, not every recording blob or analysis result.
-    await new Promise((resolve,reject)=>{
-      const tx=db.transaction("recordings","readonly");
-      const request=tx.objectStore("recordings").openCursor();
-      request.onsuccess=()=>{
-        const cursor=request.result;if(!cursor)return;
-        const take=cursor.value,metadata=recordingMetadata(take);
-        if(metadata) {
-          if(!index.has(take.exercise))index.set(take.exercise,new Map());
-          index.get(take.exercise).set(take.id,metadata);
-        }
-        cursor.continue();
-      };
-      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
-    });
+    for(const take of await TextbookSync.all("recordings")){
+      const metadata=recordingMetadata(take);
+      if(metadata){
+        if(!index.has(take.exercise))index.set(take.exercise,new Map());
+        index.get(take.exercise).set(take.id,metadata);
+      }
+    }
     state.recordingIndex=index;state.recordingIndexStatus="ready";
   } catch {state.recordingIndexStatus="error";}
   updateRecordingProgress();
@@ -369,17 +363,20 @@ function previewSample() {
 }
 function previewTurn() {return previewSample().turn;}
 function turnKey() {
-  return JSON.stringify([state.item?.id,state.turn,assignedSettings(),itemTurns()[state.turn]?.ja]);
+  return JSON.stringify([state.item?.id,state.turn,assignedSettings(),itemTurns()[state.turn]?.ja,
+    playbackVoice,playbackVoice === 'mine' ? window.TextbookVoicePlayback?.settings() : null]);
 }
 function updatePlayButton() {
   setIcon($("play"),state.playing?"pause":"play",state.playing?"暂停":"播放");
   $("play").classList.toggle("busy",state.pending);
   $("play").setAttribute("aria-busy",String(state.pending));
+  if(listeningMode)$("wholeListening").querySelector("span").textContent=state.listeningWhole&&state.playing?"暂停整题":"整题播放";
 }
 function cancelPlayback() {
   state.epoch++; state.playing=false; state.pending=false; audio.pause(); updatePlayButton();
 }
 function clearAudio() {
+  state.listeningWhole=false;
   state.loadedKey=""; audio.removeAttribute("src"); audio.load();
   $("seek").value=0; $("audioTime").textContent="0:00 / 0:00";
 }
@@ -424,7 +421,10 @@ function renderNav() {
       button.dataset.item=item.id;button.title=item.prompt;
       const label=document.createElement("span");label.className="exercise-label";
       const title=document.createElement("span");title.textContent=item.title;
-      const source=document.createElement("small");source.textContent=(recorded?item.book+" · ":"")+item.page+"页 · "+(group?group.number+" · "+group.items.length+" 个版本":item.number);
+      const source=document.createElement("small");
+      source.textContent=listeningMode
+        ? item.number+" · "+availableTurns(item).length+" 段"
+        : (recorded?item.book+" · ":"")+item.page+"页 · "+(group?group.number+" · "+group.items.length+" 个版本":item.number);
       label.append(title,source);button.append(label);
       const progress=document.createElement("span");progress.className="exercise-recording";progress.dataset.item=item.id;
       progress.append(document.createElement("span"),document.createElement("small"));button.append(progress);
@@ -475,6 +475,7 @@ function readPersonal(item) {
 async function selectItem(id,preferredTurn) {
   const item=state.lesson.items.find(i=>i.id===id); if(!item)return;
   if(isRecording()) { notice("请先停止录音，再切换练习。"); return; }
+  if ((exerciseGroup(item)?.base.id || item.id) !== (exerciseGroup()?.base.id || state.item?.id)) myVoicePlayback?.stop();
   stopPreview(); cancelPlayback(); clearAudio(); $("recordedAudio").pause();
   if($("voiceDialog").open)$("voiceDialog").close();
   if($("analysisDialog").open)closeSentenceAnalysis();
@@ -488,15 +489,20 @@ async function selectItem(id,preferredTurn) {
   const url=new URL(location.href);url.hash=id;url.searchParams.delete("turn");
   if(state.lesson.number!==1||url.searchParams.has("lesson"))url.searchParams.set("lesson",String(state.lesson.number).padStart(2,"0"));
   history.replaceState(null,"",url); renderTabs(); renderNav();
-  $("sourceLabel").textContent="第"+state.lesson.number+"课 / "+item.unit+" / "+item.book+" "+item.page+"页 / "+item.number;
+  $("sourceLabel").textContent=listeningMode
+    ? "N3 听力 / "+item.unit+" / "+item.number
+    : "第"+state.lesson.number+"课 / "+item.unit+" / "+item.book+" "+item.page+"页 / "+item.number;
   $("exerciseTitle").textContent=item.title; $("kindLabel").textContent=item.kind;
+  if(listeningMode)document.title="N3 听力跟读 · "+item.unit+" · "+item.number;
   $("exercisePrompt").textContent=item.prompt; $("exerciseNote").textContent=item.note;
   document.querySelector(".practice").classList.toggle("has-group",!markedMode&&Boolean(exerciseGroup(item)));
   $("exercisePrompt").hidden=!markedMode&&Boolean(exerciseGroup(item))&&["按教材原例练习。","按题目和图片展开的参考答案。","按原页提示练习。"].includes(item.prompt);
   $("freeAnswer").hidden=item.kind!=="自由回答"; $("personalText").value=read("answer:"+id);
   $("noteText").value=read("note:"+id); $("noteStatus").textContent="";
   document.querySelector('label[for="noteText"]').textContent=exerciseGroup(item)?variantLabel(item)+" · 练习笔记":"练习笔记";
-  renderTurns(); renderRelated(); notice(""); await loadTakes(id);
+  renderTurns(); renderRelated(); updateMyVoiceTools(); notice("");
+  refreshListeningVoiceStatus(true);
+  await loadTakes(id);
 }
 function renderRelated() {
   const container=$("related"); container.replaceChildren();
@@ -513,7 +519,7 @@ function renderTurns() {
   const list=$("turnList"); list.replaceChildren(); const turns=itemTurns();
   const group=markedMode?null:exerciseGroup();
   $("turnCount").textContent=turns.length?turns.length+" 段":"";
-  $("play").disabled=!turns.length||!state.voices.length;
+  $("play").disabled=!turns.length||(!listeningMode&&!state.voices.length);
   $("previous").disabled=!turns.length; $("next").disabled=!turns.length;
   if(!turns.length) {
     const p=document.createElement("p"); p.className="empty-state";
@@ -523,6 +529,9 @@ function renderTurns() {
   }
   for(const [index,turn] of turns.entries()) {
     if(markedMode&&index!==state.turn)continue;
+    if(listeningMode&&turn.section){
+      const heading=document.createElement("h3");heading.className="listening-section";heading.textContent=turn.section;list.append(heading);
+    }
     const row=document.createElement("div");row.className="tagged-turn"+(group?" grouped-turn":"");
     if(group&&index===group.variable){list.append(renderVariantTabs(group));row.classList.add("variant-sentence");row.id="variantSentence";row.setAttribute("role","tabpanel");row.setAttribute("aria-labelledby","variant-"+state.item.id);}
     const button=document.createElement("button"); button.className="turn"; button.dataset.turn=index; button.title="从这里播放";
@@ -534,7 +543,14 @@ function renderTurns() {
     const n=document.createElement("span"); n.className="turn-index"; n.textContent=String(index+1).padStart(2,"0");
     const status=document.createElement("span");status.className="turn-recording";status.dataset.turn=index;
     const tags=document.createElement("span");tags.className="turn-tags";tags.dataset.turn=index;
-    content.append(ja,zh,status,tags); button.append(role,content,n); button.onclick=()=>playTurn(index);
+    content.append(ja,zh);
+    if(listeningMode){
+      const badges=document.createElement("span");badges.className="listening-turn-status";
+      const voiceStatus=document.createElement("span");voiceStatus.className="listening-voice-badge";
+      voiceStatus.dataset.reference=turn.reference||"";
+      badges.append(voiceStatus,status);content.append(badges);
+    }else content.append(status);
+    content.append(tags); button.append(role,content,n); button.onclick=()=>playTurn(index);
     const tools=document.createElement("div");tools.className="turn-tag-tools";
     const tagButton=TextbookTags.iconButton("tag","标记第 "+(index+1)+" 句");tagButton.dataset.turn=index;
     tagButton.onclick=()=>{
@@ -544,7 +560,14 @@ function renderTurns() {
     };
     tools.append(tagButton);
     row.append(button,tools);list.append(row);
-    addRuby(ja,turn.ja);
+    if(listeningMode&&turn.ruby){
+      ja.replaceChildren();
+      for(const [part,base,reading] of turn.ruby.matchAll(/\{([^|}]+)\|([^}]+)\}|[^{}]+/g)){
+        if(!reading){ja.append(part);continue;}
+        const ruby=document.createElement("ruby"), rt=document.createElement("rt");
+        rt.textContent=reading;ruby.append(base,rt);ja.append(ruby);
+      }
+    }else addRuby(ja,turn.ja);
   }
   if(group){
     const nav=document.createElement("div");nav.className="variant-navigation";
@@ -596,12 +619,129 @@ function applyDisplay() {
 }
 async function audioFor(turn,settings) {
   if(window.TextbookOffline)return TextbookOffline.audioFor(turn);
+  if(turn.reference)return {filename:turn.reference,audio_url:"/media/reference/"+encodeURIComponent(turn.reference),kind:"original"};
   if(!settings||!state.voices.some(v=>v.style_id===settings.style_id))
     throw new Error("“"+(turn.role||"当前角色")+"”的音色或风格未安装，请在配音设置中重新选择。");
   const key=JSON.stringify([turn.ja,settings]);
   if(!state.cache.has(key))state.cache.set(key,api("/api/textbook/tts",{text:turn.ja,...settings})
     .catch(e=>{state.cache.delete(key);throw e;}));
   return state.cache.get(key);
+}
+let playbackVoice = (listeningMode||window.TextbookVoicePlayback) && read('playbackVoice') === 'mine' ? 'mine' : 'original';
+function myVoiceSentences() {
+  const group = markedMode ? null : exerciseGroup();
+  const items = group ? group.items : state.item ? [state.item] : [];
+  return items.flatMap(item => availableTurns(item).map(turn => ({turn:{...turn},settings:{...assignedSettings(turn,item)}})));
+}
+function updateMyVoiceTools() {
+  if (!myVoicePlayback || !$("textbookVoiceTools")) return;
+  $("textbookVoiceTools").hidden = false;
+  $("textbookPlaybackVoice").value = playbackVoice;
+  const count = TextbookVoicePlayback.unique(myVoiceSentences()).length;
+  const action = listeningMode ? '全部换成我的音色' : '本练习全部换声';
+  $("textbookVoiceAll").textContent = `${action}（${count} 句）`;
+  $("textbookVoiceAll").disabled = !count || myVoicePlayback.busy || isRecording() || (!listeningMode && !state.voices.length);
+}
+const listeningVoiceLabels = {
+  loading:"正在检查音色",
+  ready:"已换成我的音色",
+  missing:"未换声",
+  other_settings:"已换声 · 其他参数",
+  unavailable:"音色状态不可用",
+  no_profile:"未设置当前音色"
+};
+let listeningVoiceRequest=0;
+function showListeningVoiceStatus(result, fallback, message) {
+  const summary=$("listeningVoiceStatus");
+  let ready=0, missing=0, other=0, unavailable=0;
+  for(const badge of $("turnList").querySelectorAll(".listening-voice-badge")){
+    const status=result?.statuses?.[badge.dataset.reference]||fallback;
+    badge.dataset.status=status;
+    badge.textContent=listeningVoiceLabels[status];
+    if(status==="ready")ready++;
+    else if(status==="missing")missing++;
+    else if(status==="other_settings")other++;
+    else if(status==="unavailable")unavailable++;
+  }
+  summary.hidden=false;
+  summary.textContent=message||[
+    `本题已换声 ${ready}/${itemTurns().length} 句`,
+    `未换声 ${missing} 句`,
+    other?`其他参数已换声 ${other} 句`:"",
+    unavailable?`状态不可用 ${unavailable} 句`:""
+  ].filter(Boolean).join(" · ");
+}
+async function refreshListeningVoiceStatus(reset=false) {
+  if(!listeningMode||!state.item)return;
+  if(window.TextbookOffline){
+    const turns=itemTurns();
+    const statuses=Object.fromEntries(turns.map(turn=>[turn.reference,turn.offlineMyVoice?"ready":"missing"]));
+    $("textbookPlaybackVoice").options[1].disabled=!state.lesson.items.some(item=>item.turns.some(turn=>turn.offlineMyVoice));
+    showListeningVoiceStatus({statuses},"unavailable");
+    return;
+  }
+  if(!myVoicePlayback)return;
+  const request=++listeningVoiceRequest;
+  const references=itemTurns().map(turn=>turn.reference).filter(Boolean);
+  if(reset)showListeningVoiceStatus(null,"loading","正在检查本题的换声状态…");
+  try{
+    const result=await api("/api/my-voice/reference-statuses",{
+      reference_filenames:references,...TextbookVoicePlayback.settings()
+    });
+    if(request!==listeningVoiceRequest)return;
+    if(result.profile_ready)showListeningVoiceStatus(result,"unavailable");
+    else showListeningVoiceStatus(null,"no_profile","请先保存专用音色样本。");
+  }catch{
+    if(request===listeningVoiceRequest)
+      showListeningVoiceStatus(null,"unavailable","暂时无法读取换声状态，刷新页面后重试。");
+  }
+}
+const myVoicePlayback = !window.TextbookOffline && window.TextbookVoicePlayback ? TextbookVoicePlayback.create({
+  api,originalFor:audioFor,onConverted:()=>refreshListeningVoiceStatus(),
+  onBatch: progress => {
+    if (!$("textbookVoiceBatchStatus")) return;
+    const completed = progress.completed + progress.failed;
+    $("textbookVoiceProgress").hidden = !progress.running;
+    $("textbookVoiceProgress").max = progress.total;
+    $("textbookVoiceProgress").value = completed;
+    $("textbookVoiceStop").hidden = !progress.running;
+    $("textbookVoiceStop").disabled = progress.stopping;
+    const message = progress.running ? progress.stopping ? '正在停止，当前句处理结束后停止队列…' :
+      `正在换声 ${progress.index || 1}/${progress.total} · ${progress.text || '正在准备'} ` :
+      `${progress.stopped ? '已停止' : '本练习换声完成'}：${progress.completed}/${progress.total} 句已就绪${progress.failed ? `，${progress.failed} 句失败，可重试补齐` : ''}`;
+    $("textbookVoiceBatchStatus").textContent = message;
+    $("textbookVoiceBatchStatus").title = progress.errors.join('\n');
+    if (!progress.running && progress.errors.length) $("textbookVoiceBatchStatus").textContent += ` · ${progress.errors[0]}`;
+    updateMyVoiceTools();
+  }
+}) : null;
+if ((myVoicePlayback||listeningMode) && $("textbookPlaybackVoice")) {
+  $("textbookPlaybackVoice").onchange = () => {
+    if (isRecording()) { $("textbookPlaybackVoice").value = playbackVoice; notice('请先停止录音。'); return; }
+    cancelPlayback(); clearAudio(); playbackVoice = $("textbookPlaybackVoice").value;
+    save('playbackVoice',playbackVoice);
+    notice(playbackVoice === 'mine' ? window.TextbookOffline?'有换声音频的句子会播放我的音色，其余播放教材原音。':'点击句子将自动换声并播放；已生成的直接播放。' : listeningMode ? '播放教材原音。' : '点击句子播放原配音。');
+  };
+}
+if (myVoicePlayback && $("textbookPlaybackVoice")) {
+  $("textbookVoiceAll").onclick = async () => {
+    if (isRecording()) { notice('请先停止录音。'); return; }
+    if (myVoicePlayback.busy) return;
+    cancelPlayback(); clearAudio(); notice(''); playbackVoice = 'mine'; save('playbackVoice',playbackVoice); updateMyVoiceTools();
+    try { await myVoicePlayback.startBatch(myVoiceSentences()); } catch(error) { notice(error.message); }
+  };
+  $("textbookVoiceStop").onclick = () => myVoicePlayback.stop();
+  const invalidateMyVoice = () => {
+    myVoicePlayback.stop();
+    if (playbackVoice === 'mine') { cancelPlayback(); clearAudio(); }
+    refreshListeningVoiceStatus(true);
+  };
+  window.addEventListener('my-voice-settings-changed',invalidateMyVoice);
+  window.addEventListener('my-voice-profile-changed',invalidateMyVoice);
+  window.addEventListener('storage', event => { if(event.key === 'my-voice:tuning') invalidateMyVoice(); });
+  window.addEventListener('focus',()=>refreshListeningVoiceStatus());
+  window.addEventListener('beforeunload', event => { if(myVoicePlayback.busy) { event.preventDefault(); event.returnValue = ''; } });
+  window.addEventListener('pagehide', () => myVoicePlayback.stop());
 }
 function applyPlaybackSpeed() {
   const rate=Number($("speed").value);
@@ -610,20 +750,32 @@ function applyPlaybackSpeed() {
   audio.playbackRate=rate;
 }
 audio.addEventListener("loadedmetadata",applyPlaybackSpeed);
-async function playTurn(index) {
+audio.addEventListener("loadedmetadata",()=>{
+  if(listeningMode)$("seek").max=Number.isFinite(audio.duration)?audio.duration:1;
+});
+async function playTurn(index, {whole=false}={}) {
   if(isRecording()) { notice("录音中，停止后可以播放。"); return; }
   stopPreview();
-  const turns=itemTurns(); if(!turns[index]||!state.voices.length)return;
+  const turns=itemTurns(); if(!turns[index]||(!listeningMode&&!state.voices.length))return;
   const generation=++state.epoch; audio.pause(); $("recordedAudio").pause();
+  state.listeningWhole=whole;
   state.turn=index; state.playing=true; state.pending=true; state.loadedKey="";
-  activeTurn(); updatePlayButton(); notice("正在准备本地配音…");
+  activeTurn(); updatePlayButton();
+  if(whole)$("turnList").querySelector(".turn.active")?.scrollIntoView({block:"nearest"});
+  notice(listeningMode?"正在加载本句音频…":"正在准备本地配音…");
   try {
-    const result=await audioFor(turns[index],{...assignedSettings(turns[index])});
+    const voice = {...assignedSettings(turns[index])};
+    const result = listeningMode&&window.TextbookOffline ?
+      await TextbookOffline.audioFor(turns[index],playbackVoice==="mine") :
+      playbackVoice === 'mine' && myVoicePlayback ?
+      await myVoicePlayback.resolve({...turns[index]},voice,{valid:()=>generation===state.epoch,
+        onPhase:message=>{if(generation===state.epoch)notice(message);}}) : await audioFor(turns[index],voice);
     if(generation!==state.epoch)return;
     audio.src=result.audio_url; state.loadedKey=turnKey();
     audio.load(); applyPlaybackSpeed(); await audio.play();
     if(generation!==state.epoch)return;
-    state.pending=false; updatePlayButton(); notice("");
+    state.pending=false; updatePlayButton();
+    notice(listeningMode&&window.TextbookOffline&&playbackVoice==="mine"&&!result.usedMyVoice?"本句播放教材原音。":"");
   } catch(error) {
     if(generation!==state.epoch)return;
     state.playing=false; state.pending=false; updatePlayButton();
@@ -634,6 +786,7 @@ $("play").onclick=async()=>{
   if(isRecording()) { notice("录音中，停止后可以播放。"); return; }
   stopPreview();
   if(state.playing) { cancelPlayback(); return; }
+  if(state.listeningWhole){playWholeListening();return;}
   if(state.loadedKey===turnKey()&&audio.getAttribute("src")&&!audio.ended) {
     $("recordedAudio").pause(); state.playing=true; updatePlayButton();
     try { applyPlaybackSpeed(); await audio.play(); notice(""); } catch(e) { cancelPlayback(); notice(e.message); }
@@ -643,26 +796,63 @@ $("previous").onclick=()=>markedMode?MarkedPractice.step(-1):playTurn(Math.max(0
 $("next").onclick=()=>markedMode?MarkedPractice.step(1):playTurn(Math.min(itemTurns().length-1,state.turn+1));
 $("loop").onclick=()=>{
   state.loop=!state.loop; $("loop").setAttribute("aria-pressed",String(state.loop)); save(markedMode?"markedLoop":"loop",state.loop?"1":"0");
+  if(state.loop&&state.listeningWhole)playTurn(state.turn);
 };
 $("speed").onchange=()=>{applyPlaybackSpeed();save("speed",$("speed").value);};
 audio.addEventListener("ended",()=>{
   if(!state.playing)return;
-  if(state.loop)playTurn(state.turn);
-  else if(markedMode){state.playing=false;updatePlayButton();}
+  if(state.listeningWhole){
+    if(playbackVoice==="mine"&&state.turn<itemTurns().length-1)playTurn(state.turn+1,{whole:true});
+    else{state.playing=false;updatePlayButton();}
+  }
+  else if(state.loop)playTurn(state.turn);
+  else if(markedMode||listeningMode){state.playing=false;updatePlayButton();}
   else if(state.turn<itemTurns().length-1)playTurn(state.turn+1);
   else {
     state.playing=false;updatePlayButton();
   }
 });
 audio.addEventListener("timeupdate",()=>{
+  if(state.listeningWhole&&playbackVoice==="original"){
+    const index=itemTurns().findIndex(turn=>audio.currentTime>=turn.start&&audio.currentTime<turn.end);
+    if(index>=0&&index!==state.turn){
+      state.turn=index;activeTurn();$("turnList").querySelector(".turn.active")?.scrollIntoView({block:"nearest"});
+    }
+  }
   const duration=Number.isFinite(audio.duration)?audio.duration:0;
   $("seek").max=duration||1;$("seek").value=audio.currentTime||0;
   $("audioTime").textContent=time(audio.currentTime)+" / "+time(duration);
 });
 audio.addEventListener("error",()=>{
   if(!audio.getAttribute("src"))return;
-  cancelPlayback();notice("音频无法播放，请重试或检查本地配音服务。");clearAudio();
+  cancelPlayback();notice(listeningMode?"音频无法播放，请重试。":"音频无法播放，请重试或检查本地配音服务。");clearAudio();
 });
+async function playWholeListening(){
+  if(!(state.item?.track||state.item?.offlineTrack)||isRecording())return;
+  if(state.listeningWhole&&state.playing){cancelPlayback();return;}
+  if(playbackVoice==="mine"){
+    const loaded=state.loadedKey===turnKey()&&audio.getAttribute("src");
+    if(!state.listeningWhole||!loaded||audio.ended){
+      const index=state.listeningWhole&&!loaded?state.turn:0;
+      return playTurn(index,{whole:true});
+    }
+  }
+  const resume=state.listeningWhole&&audio.getAttribute("src")&&!audio.ended;
+  cancelPlayback();$("recordedAudio").pause();
+  const generation=state.epoch;
+  try{
+    if(!resume){
+      const source=window.TextbookOffline?await TextbookOffline.audioFile(state.item.offlineTrack):state.item.track;
+      if(generation!==state.epoch)return;
+      state.turn=0;activeTurn();
+      $("turnList").querySelector(".turn.active")?.scrollIntoView({block:"nearest"});
+      audio.src=source;state.loadedKey="";state.listeningWhole=true;
+    }
+    state.playing=true;updatePlayButton();
+    applyPlaybackSpeed();await audio.play();if(generation===state.epoch)notice("");
+  }
+  catch(error){if(generation===state.epoch){cancelPlayback();notice(error.message);}}
+}
 $("seek").oninput=()=>{if(Number.isFinite(audio.duration))audio.currentTime=Number($("seek").value);};
 $("search").oninput=()=>{if(state.lesson)renderNav();};
 $("sourceButton").onclick=()=>{
@@ -697,7 +887,7 @@ async function loadTakes(id) {
     const item=state.lesson.items.find(i=>i.id===id),sources=exerciseGroup(item)?.items||[item];
     const rows=[];
     for(const source of sources) {
-      const loaded=await dbRequest("readonly",store=>store.index("exercise").getAll(source.id));
+      const loaded=await TextbookSync.hydrateRecordings(await dbRequest("readonly",store=>store.index("exercise").getAll(source.id)));
       state.recordingIndex.set(source.id,new Map());loaded.forEach(indexRecording);
       state.recordingLoaded.add(source.id);rows.push(...loaded);
     }
@@ -710,7 +900,7 @@ function currentSentence() {
   const turn=itemTurns()[state.turn];if(!turn)return null;
   const settings=assignedSettings(turn);
   return {lessonId:state.lesson.id,exerciseId:state.item.id,index:state.turn,role:turn.role,text:turn.ja,
-    settings:settings?{...settings}:null};
+    settings:settings?{...settings}:null,...(turn.reference?{reference:turn.reference}:{})};
 }
 function takeMatches(take,sentence=currentSentence()) {
   if(!take.sentence)return take.exercise===state.item?.id;
@@ -819,19 +1009,14 @@ $("manageUnmatched").onclick=openUnmatchedRecordings;
 $("refreshUnmatched").onclick=openUnmatchedRecordings;
 $("closeUnmatched").onclick=()=>$("unmatchedDialog").close();
 let livePractice = null;
+let livePracticeOpening = false;
 const retryAnalysisButton=$("retryAnalysis");
 retryAnalysisButton.title="用原方案 DTW 重新计算，结果先存为候选，不替换当前图表";
 retryAnalysisButton.innerHTML='<i data-lucide="rotate-cw"></i><span>重算 DTW</span>';
-const livePracticeButton = document.createElement("button");
-livePracticeButton.type = "button";
-livePracticeButton.className = "text-button analysis-entry";
-livePracticeButton.title = "实时跟读，不保存录音";
-livePracticeButton.innerHTML = '<i data-lucide="activity"></i><span>实时练习</span>';
-$("analysisDialog").querySelector(".analysis-status").prepend(livePracticeButton);
 const rerecordButton=document.createElement("button");
 rerecordButton.type="button";rerecordButton.className="text-button";
 rerecordButton.innerHTML='<i data-lucide="mic"></i><span>重新录音</span>';
-livePracticeButton.before(rerecordButton);
+$("analysisDialog").querySelector(".analysis-status").prepend(rerecordButton);
 const analysisMeter=document.createElement("meter");
 analysisMeter.min=-80;analysisMeter.max=0;analysisMeter.value=-80;
 analysisMeter.setAttribute("aria-label","录音实时音量");analysisMeter.hidden=true;
@@ -843,51 +1028,110 @@ rerecordButton.onclick=()=>{
   $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-pause"},location.origin);
   startRecording(state.analysisView);
 };
-livePracticeButton.hidden = Boolean(window.TextbookOffline);
-livePracticeButton.onclick = async () => {
-  const sentence = state.analysisView?.sentence || currentSentence();
-  if (!sentence || isRecording()) { notice("请先选择句子并结束录音。"); return; }
+async function openLivePractice({range=null,referenceFilename}) {
+  const view=state.analysisView, generation=state.analysisEpoch;
+  if(window.TextbookOffline||livePracticeOpening||!view?.analysis||view.trimming||view.gainChanging||isRecording()||!$("analysisDialog").open)return;
+  if(referenceFilename!==view.analysis.reference?.filename)return;
+  const sentence=view.sentence;
+  const reference={...view.analysis.reference,...(view.referenceURL?{audio_url:view.referenceURL}:{})};
+  const selection=range?{start:range.start,end:range.end}:null;
+  const moras=MoraGroups.display(view.analysis.result?.pitch).map(mora=>({
+    text:mora.text,time_start:mora.time_start,time_end:mora.time_end,reference_timing_discarded:mora.reference_timing_discarded}));
   cancelPlayback(); stopPreview(); $("recordedAudio").pause();
   $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-pause"},location.origin);
-  livePracticeButton.disabled = true;
+  livePracticeOpening=true;updateAnalysisEntry();
   try {
-    livePractice = await import("./textbook-live.mjs?v=3");
-    if (isRecording() || !$("analysisDialog").open) return;
-    await livePractice.open({text:sentence.text,
-      getReference:()=>audioFor({role:sentence.role,ja:sentence.text},sentence.settings)});
+    livePractice = await import("./textbook-live.mjs?v=9");
+    if(state.analysisView!==view||state.analysisEpoch!==generation||isRecording()||!$("analysisDialog").open)return;
+    await livePractice.open({text:sentence.text,moras,range:selection,getReference:async()=>reference});
   } catch(e) { notice("实时练习打开失败："+e.message); }
-  finally { updateAnalysisEntry(); }
-};
+  finally { livePracticeOpening=false;updateAnalysisEntry(); }
+}
 function updateAnalysisEntry() {
-  rerecordButton.disabled=state.recordingPending||state.recordingSaving;
+  const changingAudio=Boolean(state.analysisView?.trimming||state.analysisView?.gainChanging);
+  const loading=Boolean(state.analysisView?.analysisLoading);
+  rerecordButton.disabled=state.recordingPending||state.recordingSaving||changingAudio||loading;
   rerecordButton.querySelector("span").textContent=state.recorder?.state==="recording"?"停止并分析":"重新录音";
   analysisMeter.hidden=!state.analysisView?.rerecording;
-  $("analysisFrame").inert=Boolean(state.analysisView?.rerecording&&isRecording());
-  $("retryAnalysis").disabled=isRecording();
-  livePracticeButton.disabled = !currentSentence() || isRecording();
+  $("analysisFrame").inert=Boolean(state.analysisView?.rerecording&&isRecording())||changingAudio;
+  if($("analysisTools"))$("analysisTools").inert=changingAudio;
+  $("retryAnalysis").disabled=isRecording()||changingAudio||loading;
+  if($("textbookAnalysisReference"))$("textbookAnalysisReference").disabled=Boolean(window.TextbookOffline)||isRecording()||changingAudio||loading;
+  if(state.analysisFrameReady)$("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-live-state",
+    available:!window.TextbookOffline&&Boolean(state.analysisView?.analysis),busy:livePracticeOpening||isRecording()||changingAudio},location.origin);
   const take=selectedTake(),button=$("analyzeRecording");
   if(window.TextbookOffline){button.hidden=true;return;}
   button.disabled=!currentSentence()||isRecording();
   button.title=isRecording()?"停止录音后查看分析":!take?"打开本句跟读练习":"分析当前句和所选录音";
   button.querySelector("span").textContent=take?.analysis?"查看分析":"跟读分析";
 }
-function analysisKey(sentence) {
-  return JSON.stringify(["textbook-analysis-v7-portable",sentence.lessonId,sentence.index,sentence.role,sentence.text,sentence.settings]);
+function analysisKey(sentence,reference=null) {
+  const fields=["textbook-analysis-v7-portable",sentence.lessonId,sentence.index,sentence.role,sentence.text,sentence.settings];
+  if(sentence.reference)fields.push(sentence.reference);
+  if(reference?.kind==='my-voice'){fields[0]='textbook-analysis-v8-my-voice';fields.push(reference.filename);}
+  return JSON.stringify(fields);
 }
-async function persistTakeAnalysis(take,sentence,analysis) {
-  const db=await state.db;
-  const saved=await new Promise((resolve,reject)=>{
-    const tx=db.transaction("recordings","readwrite"),store=tx.objectStore("recordings");let saved=false;
-    const get=store.get(take.id);
+let calibrationSaveQueue=Promise.resolve();
+function writeAnalysisTransaction(db,take,sentence,analysis,referenceKey=null) {
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(["recordings","syncState"],"readwrite"),store=tx.objectStore("recordings");let saved=false;
+    let writeError;
+    const timer=setTimeout(()=>{
+      writeError=new Error("本机存储写入没有完成，本次未保存。A/B 已保留，请重试；不要清除网站数据。");
+      try{tx.abort();}catch{}
+      reject(writeError);
+    },15000);
+    const captureError=event=>{writeError ||= event.target?.error || tx.error;};
+    const get=store.get(take.id);get.onerror=captureError;
     get.onsuccess=()=>{
       // A recording deleted while recognition was running must never be restored.
-      if(!get.result||get.result.created!==take.created)return;
-      store.put({...get.result,sentence,analysis,...(take.referenceBlob?{referenceBlob:take.referenceBlob}:{})});saved=true;
+      try{
+        if(!get.result||get.result.created!==take.created)return;
+        const put=tx.objectStore("syncState").put({id:"analysis:"+take.id,created:take.created,sentence,analysis,referenceKey});
+        put.onerror=captureError;saved=true;
+      }catch(error){writeError=error;tx.abort();}
     };
-    tx.oncomplete=()=>resolve(saved);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
+    tx.oncomplete=()=>{clearTimeout(timer);resolve(saved);};
+    // Request errors can fire before tx.error is available. Wait for abort and retain the actual cause.
+    tx.onerror=captureError;
+    tx.onabort=()=>{clearTimeout(timer);reject(writeError||tx.error||new DOMException("本机存储写入已中止","AbortError"));};
   });
-  if(saved&&window.TextbookCalibration)try{await TextbookCalibration.save(take,sentence,analysis);}catch(error){
-    analysis.calibration_notice="分析已保存，但校准库保存失败："+error.message;
+}
+async function persistTakeAnalysis(take,sentence,analysis,{deferCalibration=true,saveCalibration=true}={}) {
+  window.TextbookVoicePlayback?.preserveAnalysis(analysis,take.analysis);
+  delete analysis.calibration_notice;
+  let saved;
+  const referenceKey=await TextbookSync.prepareAnalysisAudio(take,analysis);
+  for(let attempt=0;attempt<2;attempt++) {
+    try {saved=await writeAnalysisTransaction(await state.db,take,sentence,analysis,referenceKey);break;}
+    catch(error) {
+      if(attempt===0&&["AbortError","UnknownError","InvalidStateError"].includes(error.name)) {
+        state.db=openDB();continue;
+      }
+      const detail=error.name==="QuotaExceededError"?"本机存储空间不足，请先导出备份并释放磁盘空间，不要清除网站数据。":
+        `${error.name||"Error"}：${error.message||"存储写入失败"}`;
+      throw new Error(detail+" 当前 A/B 已保留，尚未保存，请重试。",{cause:error});
+    }
+  }
+  if(saved&&saveCalibration&&window.TextbookCalibration){
+    // Calibration audio reads must not hold the manual-edit queue after the analysis transaction commits.
+    const snapshot=structuredClone(analysis),view=state.analysisView;
+    let calibrationFailed=false;
+    const work=calibrationSaveQueue.catch(()=>{}).then(()=>TextbookCalibration.save(take,sentence,snapshot)).catch(error=>{
+      calibrationFailed=true;
+      analysis.calibration_notice="分析已保存，但校准库保存失败："+error.message;
+      if(state.analysisView===view&&view?.take.id===take.id){
+        view.calibrationWarning=analysis.calibration_notice;renderAnalysisRevisionControls();
+      }
+    });
+    calibrationSaveQueue=work;
+    if(deferCalibration)void work.then(()=>{
+      if(state.analysisView===view&&view?.take.id===take.id){
+        if(!calibrationFailed&&calibrationSaveQueue===work)view.calibrationWarning="";
+        return refreshAnalysisCalibrations(view);
+      }
+    }).catch(error=>{console.error("Calibration refresh failed",error);});
+    else await work;
   }
   return saved;
 }
@@ -897,14 +1141,24 @@ function showAnalysisResult() {
   $("analysisFrame").hidden=false;
   let reference=view.analysis.reference;
   if(view.take.referenceBlob){
-    view.referenceURL||=URL.createObjectURL(view.take.referenceBlob);
+    if(view.referenceAudioBlob!==view.take.referenceBlob){
+      if(view.referenceURL)URL.revokeObjectURL(view.referenceURL);
+      view.referenceURL=URL.createObjectURL(view.take.referenceBlob);
+      view.referenceAudioBlob=view.take.referenceBlob;
+    }
     reference={...reference,audio_url:view.referenceURL};
+  }else if(view.referenceURL){
+    URL.revokeObjectURL(view.referenceURL);
+    view.referenceURL=null;view.referenceAudioBlob=null;
   }
   $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-result",target:view.sentence.text,
-    recordingBlob:view.take.blob,reference,result:view.analysis.result,loops:view.analysis.loops||[]},location.origin);
+    recordingBlob:view.playbackRecordingBlob||view.take.blob,recordingRevision:view.take.created,reference,result:view.analysis.result,loops:view.analysis.loops||[],
+    referenceLabel:analysisReferenceLabel(reference?.kind==="my-voice"),
+    liveAvailable:!window.TextbookOffline},location.origin);
   renderAnalysisRevisionControls();
 }
 function analysisTimingLabel(analysis) {
+  if(analysis?.result?.pitch?.mora_timing_method==="calibrated_reference_recording_transfer")return "按校准后的标准音重新定位我的录音（待核对）";
   if(analysis?.variant_template)return "替换句共同部分校准复用（待核对）";
   const pitch=analysis?.result?.pitch;
   const method=pitch?.mora_timing_method;
@@ -914,24 +1168,48 @@ function analysisTimingLabel(analysis) {
   if(method==="calibrated_recording_transfer")return "我的校准录音迁移（待核对）";
   return "旧分析未记录音拍算法";
 }
+function analysisToolPopup(id,label,icon){
+  let toolbar=$("analysisTools");
+  if(!toolbar){toolbar=document.createElement("div");toolbar.id="analysisTools";toolbar.className="analysis-tools";$("analysisStatus").before(toolbar);}
+  let popup=$(id);
+  if(!popup){
+    popup=document.createElement("dialog");popup.id=id;popup.className="analysis-tool-popup";
+    const header=document.createElement("header"),heading=document.createElement("strong"),close=document.createElement("button"),body=document.createElement("div");
+    heading.textContent=label;close.type="button";close.className="text-button";close.innerHTML='<i data-lucide="x"></i>';close.title="关闭";close.setAttribute("aria-label","关闭"+label);close.onclick=()=>popup.close();
+    body.className="analysis-tool-content";header.append(heading,close);popup.append(header,body);$("analysisDialog").append(popup);
+    $("analysisDialog").addEventListener("close",()=>{if(popup.open)popup.close();});
+    popup.setAttribute("aria-label",label);
+    popup.addEventListener("click",event=>{if(event.target!==popup)return;const r=popup.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)popup.close();});
+    const button=document.createElement("button");button.id=id+"Open";button.type="button";button.className="text-button";button.innerHTML=`<i data-lucide="${icon}"></i><span>${label}</span>`;button.onclick=()=>{popup.hidden=false;popup.showModal();};toolbar.append(button);
+  }
+  return popup.querySelector(".analysis-tool-content");
+}
 function renderAnalysisRevisionControls() {
   let bar=$("analysisRevisions");
-  if(!bar){bar=document.createElement("details");bar.id="analysisRevisions";bar.className="analysis-revisions";$("analysisStatus").closest(".analysis-status").after(bar);}
-  const view=state.analysisView,analysis=view?.analysis;if(!analysis){bar.hidden=true;return;}
-  bar.hidden=false;bar.replaceChildren();
-  const summary=document.createElement("summary");
+  const content=analysisToolPopup("analysisRevisions","定位方案","settings-2");bar=$("analysisRevisions");
+  const view=state.analysisView,analysis=view?.analysis;
+  if(!analysis){
+    bar.hidden=true;$("analysisRevisionsOpen").hidden=true;
+    $("analysisStatus").after(retryAnalysisButton);
+    retryAnalysisButton.title="重新识别当前录音";
+    return;
+  }
+  $("analysisRevisionsOpen").hidden=false;
+  bar.hidden=false;content.replaceChildren();
+  const summary=document.createElement("div");
   const current=document.createElement("strong");current.className="analysis-timing-engine";
-  const moras=analysis.result?.pitch?.moras||[];
+  const moras=MoraGroups.display(analysis.result?.pitch);
+  const unitName=MoraGroups.groups(analysis.result?.pitch).length?"单元":"拍";
   const referenceManual=moras.filter(m=>m.reference_timing_manual).length;
   const recordingManual=moras.filter(m=>m.recording_match==="manual").length;
   const discarded=moras.filter(m=>m.reference_timing_discarded||m.recording_match==="discarded").length;
   current.textContent="当前图表音拍定位："+analysisTimingLabel(analysis)+
-    (referenceManual||recordingManual?` · 手动调整：标准音 ${referenceManual} 拍、我的录音 ${recordingManual} 拍`:"")+
-    (discarded?` · 已废弃 ${discarded} 拍`:"")+
+    (referenceManual||recordingManual?` · 手动调整：标准音 ${referenceManual} ${unitName}、我的录音 ${recordingManual} ${unitName}`:"")+
+    (discarded?` · 待手动设定 ${discarded} ${unitName}`:"")+
     (analysis.reference_calibration?` · 标准音复用 ${analysis.reference_calibration.count} 拍`:"");
-  const expand=document.createElement("span");expand.className="analysis-method-toggle";expand.textContent="方案说明与切换"+(analysis.candidate?" · 有未启用候选":"");
-  summary.append(current,expand);bar.append(summary);
-  const body=document.createElement("div");body.className="analysis-method-body";bar.append(body);
+  const entry=$("analysisRevisionsOpen");entry.title=current.textContent;
+  current.textContent="当前："+analysisTimingLabel(analysis);summary.append(current);content.append(summary);
+  const body=document.createElement("div");body.className="analysis-method-body";content.append(body);
   const methods=[
     ["DTW · 原方案","先识别你说的文字，再比较标准音与录音的声音特征，估计每个音拍的位置。属于自动估计，不是逐音素定位。"],
     ["MFA · 本地日语音素方案（试算）","用本地日语声学模型和发音词典定位音素，再对应音拍。长音、促音等边界可能仍需手动确认，不保证比 DTW 更准确。"]
@@ -939,13 +1217,14 @@ function renderAnalysisRevisionControls() {
   const methodRows=methods.map(([title,description])=>{
     const row=document.createElement("div");row.className="analysis-method-row";
     const text=document.createElement("div"),heading=document.createElement("strong"),explanation=document.createElement("p");
-    heading.textContent=title;explanation.textContent=description;text.append(heading,explanation);row.append(text);body.append(row);return row;
+    heading.textContent=title;heading.title=description;text.append(heading);row.title=description;row.append(text);body.append(row);return row;
   });
   methodRows[0].append(retryAnalysisButton);
   if(!window.TextbookOffline){
     const trial=document.createElement("button");trial.type="button";trial.className="text-button";
     trial.innerHTML='<i data-lucide="activity"></i><span>试算 MFA</span>';
     trial.title="用本地 MFA 计算，结果先存为候选，不替换当前图表";
+    trial.disabled=Boolean(view.analysisLoading);
     trial.onclick=()=>runSentenceAnalysis(true,"phone_trial");methodRows[1].append(trial);
   }
   const versions=document.createElement("div");versions.className="analysis-version-actions";body.append(versions);
@@ -959,8 +1238,8 @@ function renderAnalysisRevisionControls() {
     button.onclick=()=>queueMoraEdit(async()=>{
       const current=view.analysis;let next=structuredClone(current[field]);if(!next)return;
       const migration=field==="candidate"&&(Boolean(next.variant_template)||next.result?.pitch?.mora_timing_method==="calibrated_recording_transfer");
-      const manual=current.result?.pitch?.moras?.some(m=>m.reference_timing_manual||m.recording_match==="manual"||m.reference_timing_discarded||m.recording_match==="discarded");
-      if(field==="candidate"&&manual&&!migration&&!confirm("切换后，当前图表会改用新分析结果。\n\n你手动调整或废弃的音拍不会合并到新分析中。它们会连同当前分析保留为上一版，可点击「恢复上次切换前的分析」恢复。只保留最近一次切换前的版本，不是永久备份。\n\n原始录音不会改变。\n\n点「取消」：保留当前分析和手动修改。\n点「好」：切换到新分析。"))return;
+      const manual=MoraGroups.display(current.result?.pitch).some(m=>m.reference_timing_manual||m.recording_match==="manual"||m.reference_timing_discarded||m.recording_match==="discarded");
+      if(field==="candidate"&&manual&&!migration&&!confirm("切换后，当前图表会改用新分析结果。\n\n你手动调整或重制的音拍不会合并到新分析中。它们会连同当前分析保留为上一版，可点击「恢复上次切换前的分析」恢复。只保留最近一次切换前的版本，不是永久备份。\n\n原始录音不会改变。\n\n点「取消」：保留当前分析和手动修改。\n点「好」：切换到新分析。"))return;
       const previous=structuredClone(current);delete previous.candidate;delete previous.previous;
       next.previous=previous;
       if(field==="previous"&&current.collection_reuse)next.collection_reuse={...current.collection_reuse,status:"restored",message:"已恢复复用前的分析；可手动选择来源，或重新自动匹配。"};
@@ -975,19 +1254,23 @@ function renderAnalysisRevisionControls() {
   }
   if(analysis.candidate){const note=document.createElement("p");note.className="analysis-candidate-note";note.textContent="候选音拍定位："+analysisTimingLabel(analysis.candidate)+"（未启用）。";versions.prepend(note);}
   const warning=document.createElement("p");warning.className="analysis-version-warning";
-  warning.textContent=migrationCandidate?"启用迁移候选会保留本次最新的手动修改。迁移位置仍需核对；切换前的分析可恢复。原始录音不变。":"重算只生成候选，不改变当前图表。切换后不合并手动修改；只保留最近一次切换前的分析，可恢复。原始录音不变。";body.append(warning);
+  warning.title=migrationCandidate?"启用迁移候选会保留本次最新的手动修改。迁移位置仍需核对；切换前的分析可恢复。原始录音不变。":"重算只生成候选，不改变当前图表。切换后不合并手动修改；只保留最近一次切换前的分析，可恢复。原始录音不变。";warning.textContent="重算先存候选 · 原录音不变 ⓘ";body.append(warning);
   if(view.calibrations?.length){
     const note=document.createElement("p");note.className="analysis-calibration-summary";
     const standard=view.calibrations.filter(t=>t.value.track==="reference").length;
     const recordings=view.calibrations.filter(t=>t.value.track==="recording").length;
     note.textContent=`本句校准库：标准音 ${standard} 份 · 我的录音 ${recordings} 份。标准音按相同音频自动复用；校准录音可用于后续重录。`;body.append(note);
   }
-  const samples=(view.calibrations||[]).filter(t=>t.value.track==="recording"&&t.value.sourceCreated!==view.take?.created&&t.value.moras.some(m=>m.confirmed));
+  const samples=(view.calibrations||[]).filter(t=>t.value.track==="recording"&&t.value.sourceCreated!==view.take?.created&&MoraGroups.confirmed(t.value));
   if(!window.TextbookOffline&&samples.length){
     const row=document.createElement("div");row.className="analysis-calibration-row";
     const title=document.createElement("strong");title.textContent="复用我已校准的录音";
     const select=document.createElement("select");select.setAttribute("aria-label","选择已校准录音样本");
-    for(const [i,sample] of samples.entries())select.add(new Option(new Date(sample.value.sourceCreated||sample.value.created).toLocaleString("zh-CN")+` · 已确认 ${sample.value.moras.filter(m=>m.confirmed).length}/${sample.value.moras.length} 拍`,String(i)));
+    for(const [i,sample] of samples.entries()){
+      const groups=sample.value.groups||[],units=sample.value.moras.length-groups.reduce((n,g)=>n+g.end_index-g.start_index,0);
+      const confirmed=sample.value.moras.filter(m=>m.confirmed&&!groups.some(g=>m.index>=g.start_index&&m.index<=g.end_index)).length+groups.filter(g=>g.confirmed).length;
+      select.add(new Option(new Date(sample.value.sourceCreated||sample.value.created).toLocaleString("zh-CN")+` · 已确认 ${confirmed}/${units} ${groups.length?"单元":"拍"}`,String(i)));
+    }
     const button=document.createElement("button");button.type="button";button.className="text-button";
     button.innerHTML='<i data-lucide="arrow-right-left"></i><span>迁移为候选</span>';
     button.onclick=()=>migrateCalibratedRecording(samples[Number(select.value)],button);
@@ -1002,53 +1285,129 @@ function renderAnalysisRevisionControls() {
 function titleCalibrationTexts(item=state.item){
   return state.lesson.items.filter(other=>other.title===item.title).flatMap(other=>availableTurns(other).map(turn=>turn.ja));
 }
+function collectionReuseSummary({referenceCount=0,recordingCount=0,pendingCount=0}) {
+  return `标准音复用 ${referenceCount} 拍；我的录音估计定位 ${recordingCount} 拍（待核对）`+
+    (pendingCount?`；本次另有 ${pendingCount} 拍未能可靠定位。`:"。");
+}
 function renderVariantCalibrationControls(view){
-  let panel=$("variantCalibrationControls");
-  if(!panel){panel=document.createElement("details");panel.open=true;panel.id="variantCalibrationControls";panel.className="variant-calibration-controls";$("analysisStatus").closest(".analysis-status").after(panel);}
+  const panel=analysisToolPopup("variantCalibrationControls","同组校准","copy");
   panel.replaceChildren();panel.hidden=false;
-  const summary=document.createElement("summary");summary.textContent=`同组音拍校准 · ${view.collectionTitle||state.item.title}`;panel.append(summary);
+  $("variantCalibrationControlsOpen").title=`${view.collectionTitle||state.item.title}：复用本组已手动保存的音拍，或选择两句相同片段进行迁移。结果仍需核对，不改变原录音。`;
   const entries=view.variantCalibrations||[],body=document.createElement("div");body.className="analysis-calibration-row";panel.append(body);
   const toggle=document.createElement("label"),check=document.createElement("input");check.type="checkbox";check.checked=read("autoCollectionCalibration","1")==="1";check.disabled=!!window.TextbookOffline;
   check.onchange=()=>{save("autoCollectionCalibration",check.checked?"1":"0");if(check.checked)automaticallyReuseCollection(view,true);};toggle.append(check,document.createTextNode("自动复用本组校准"));body.append(toggle);
   const status=document.createElement("p");status.className="collection-calibration-status";
-  status.textContent=view.collectionStatus||view.analysis.collection_reuse?.message||(view.calibrationsLoading?"正在读取校准库…":`本组 ${view.collectionItemCount||0} 个题目 · ${entries.length} 份手动校准`);
+  const reuse=view.analysis.collection_reuse;
+  const reuseMessage=reuse&&Number.isFinite(reuse.recordingCount)&&reuse.status!=="restored"&&(reuse.count||reuse.pendingCount)?
+    collectionReuseSummary(reuse)+(reuse.message?.includes(" 部分匹配未完成：")?" 部分匹配未完成："+reuse.message.split(" 部分匹配未完成：")[1]:""):reuse?.message;
+  status.textContent=(view.collectionStatus===reuse?.message?reuseMessage:view.collectionStatus)||reuseMessage||(view.calibrationsLoading?"正在读取校准库…":`本组 ${view.collectionItemCount||0} 个题目 · ${entries.length} 份手动校准`);
+  status.title="定位数量是本次算法算出位置的数量，不代表手动确认。未能可靠定位只统计本次迁移；波形红色还包含整句的缺失、空隙与重叠。一处边界问题可能使两侧音拍都标红。";
   if(window.TextbookOffline)status.textContent="手机可查看已导入的复用结果；自动匹配请在电脑完成后同步练习包。";
   body.append(status);
   if(!entries.length){const note=document.createElement("p");note.textContent="本组其他句子还没有保存的手动校准。校准任一版本后，其他版本会在分析时自动匹配。";body.append(note);return;}
   const manual=document.createElement("details");manual.className="collection-manual";
-  const manualTitle=document.createElement("summary");manualTitle.textContent="手动选择来源与对应片段";manual.append(manualTitle);body.append(manual);
+  const manualTitle=document.createElement("summary");manualTitle.textContent="选择两句的相同片段";manual.append(manualTitle);body.append(manual);
   manual.open=!!view.collectionManualOpen||!entries.some(e=>e.plans.length);
   manual.ontoggle=()=>{if(manual.isConnected)view.collectionManualOpen=manual.open;};
-  const select=document.createElement("select");select.setAttribute("aria-label","选择同标题校准来源");
+  const select={value:"0"},sources=document.createElement("details"),sourceTitle=document.createElement("summary");
+  sources.className="collection-source-choices";sourceTitle.textContent="选择已校准句";sources.append(sourceTitle);
   for(const [i,{template,plans}] of entries.entries()){
     const source=state.lesson.items.find(item=>item.id===template.value.exerciseId)||state.lesson.items.find(item=>availableTurns(item).some(turn=>turn.ja.normalize("NFKC").trim()===template.value.text));
-    select.add(new Option(`${source?.number||"已保存样本"} · ${template.value.track==="reference"?"标准发音":"我的录音"} · ${plans.length?"已匹配 "+plans.reduce((n,p)=>n+p.pairs.length,0)+" 拍":"需手动对应"}`,String(i)));
+    const choice=document.createElement("button");choice.type="button";choice.className="collection-source-choice";choice.dataset.sourceIndex=String(i);
+    const label=document.createElement("small"),sentence=document.createElement("span");
+    label.textContent=`${source?.number||"已保存样本"} · ${template.value.track==="reference"?"标准发音":"我的录音"}`;
+    sentence.textContent=template.value.text;sentence.lang="ja";choice.append(label,sentence);
+    choice.onclick=()=>{select.value=String(i);select.onchange();sources.open=false;};sources.append(choice);
   }
   const chosen=entries.findIndex(e=>e.template.value.key===view.collectionSourceKey);if(chosen>=0)select.value=String(chosen);
-  const editor=document.createElement("div");editor.className="collection-correspondence";manual.append(select,editor);
+  const editor=document.createElement("div");editor.className="collection-correspondence";manual.append(sources,editor);
   select.onchange=()=>{
     const entry=entries[Number(select.value)],template=entry.template;view.collectionSourceKey=template.value.key;editor.replaceChildren();
-    const preview=document.createElement("p");preview.textContent=template.value.text;preview.lang="ja";editor.append(preview);
+    for(const choice of sources.querySelectorAll("button"))choice.setAttribute("aria-pressed",String(choice.dataset.sourceIndex===select.value));
     const target=view.analysis.result.pitch.moras,source=template.value.moras,first=entry.plans[0];
-    const selectors=[];
-    for(const [label,moras,value] of [["来源起拍",source,first?.pairs[0].source||0],["来源末拍",source,first?.pairs.at(-1).source??Math.min(2,source.length-1)],["本句起拍",target,first?.pairs[0].target||0],["本句末拍",target,first?.pairs.at(-1).target??Math.min(2,target.length-1)]]){
-      const wrap=document.createElement("label"),control=document.createElement("select");wrap.textContent=label;control.setAttribute("aria-label",label);
-      moras.forEach((m,index)=>control.add(new Option(`${index+1} · ${m.text}`,String(index))));control.value=String(value);wrap.append(control);editor.append(wrap);selectors.push(control);
+    view.collectionDrafts ||= new Map();
+    let draft=view.collectionDrafts.get(template.value.key);
+    if(!draft){
+      const pairs=first?.pairs||[];
+      const range=pairs.length?[pairs[0].source,pairs.at(-1).source_end??pairs.at(-1).source,pairs[0].target,pairs.at(-1).target_end??pairs.at(-1).target]:[-1,-1,-1,-1];
+      const same=range[0]>=0&&source.slice(range[0],range[1]+1).map(m=>m.text).join("")===target.slice(range[2],range[3]+1).map(m=>m.text).join("")&&range[1]-range[0]===range[3]-range[2];
+      draft={ranges:same?range:[-1,-1,-1,-1]};view.collectionDrafts.set(template.value.key,draft);
     }
-    const times=[];
-    for(const label of ["本句开始（秒）","本句结束（秒）"]){const wrap=document.createElement("label"),input=document.createElement("input");wrap.textContent=label;input.type="number";input.min="0";input.step="0.01";input.setAttribute("aria-label",label);wrap.append(input);editor.append(wrap);times.push(input);}
+    draft.fragments ||= [];
+    const ranges=draft.ranges,pickers=[];
+    for(const [side,label,text,moras] of [[0,"已校准句",template.value.text,source],[1,"当前句",view.sentence.text,target]]){
+      const row=document.createElement("div");row.className="collection-sentence";
+      const heading=document.createElement("strong"),sentence=document.createElement("p"),kana=document.createElement("div");
+      heading.textContent=label;sentence.textContent=text;sentence.lang="ja";
+      kana.className="collection-kana";kana.setAttribute("role","group");kana.setAttribute("aria-label",label+"假名片段");
+      let anchor=null,pressed=null,dragged=false;
+      const groupDefs=side===0?template.value.groups||[]:MoraGroups.groups(view.analysis.result.pitch);
+      const units=MoraGroups.units({moras,mora_groups:groupDefs});
+      const choose=(index,extend)=>{
+        const first=extend&&anchor!==null?Math.min(anchor,index):index,last=extend&&anchor!==null?Math.max(anchor,index):index;
+        if(!extend||anchor===null)anchor=index;
+        ranges[side*2]=first;ranges[side*2+1]=groupDefs.find(g=>last>=g.start_index&&last<=g.end_index)?.end_index??last;
+        update();
+      };
+      units.forEach(({index,text,group})=>{
+        const m=group||moras[index];
+        const chip=document.createElement("button");chip.type="button";chip.textContent=text;chip.dataset.moraIndex=String(index);
+        chip.title=`${label}第 ${index+1} 拍起 · ${text}`;chip.setAttribute("aria-label",chip.title);
+        if(side===0)chip.title+=m.discarded?" · 待手动设定，不复用":m.confirmed?" · 已手动确认，可复用":" · 未手动确认，不复用此单元";
+        chip.onpointerenter=event=>{if(!(event.buttons&1)||pressed===null)return;dragged=true;anchor=pressed;choose(index,true);};
+        chip.onclick=event=>{
+          if(dragged){dragged=false;anchor=null;return;}
+          if(event.shiftKey||anchor!==null){choose(index,true);anchor=null;}else choose(index,false);
+        };
+        chip.onpointerdown=event=>{if(event.button!==0)return;dragged=false;pressed=index;};
+        kana.append(chip);
+      });
+      kana.onpointerup=()=>{pressed=null;if(dragged)anchor=null;};
+      kana.onpointercancel=()=>{pressed=null;anchor=null;dragged=false;};
+      kana.resetSelection=()=>{pressed=null;anchor=null;dragged=false;};
+      row.append(heading,sentence,kana);editor.append(row);pickers.push(kana);
+    }
     const selectedText=document.createElement("p");selectedText.className="collection-selected-text";editor.append(selectedText);
+    const fragments=document.createElement("div");fragments.className="collection-fragments";editor.append(fragments);
+    const add=document.createElement("button");add.type="button";add.className="text-button";add.textContent="添加对应片段";add.title="把两句当前选中的相同假名加入列表，然后可以继续选择下一段。同一来源片段可以对应本句不同位置。";
+    const renderFragments=()=>{
+      fragments.replaceChildren();
+      draft.fragments.forEach((range,i)=>{
+        const row=document.createElement("div"),label=document.createElement("span"),remove=document.createElement("button");
+        label.textContent=`${i+1}. ${source.slice(range[0],range[1]+1).map(m=>m.text).join("")} · 已校准句 ${range[0]+1}–${range[1]+1} → 当前句 ${range[2]+1}–${range[3]+1}`;
+        remove.type="button";remove.textContent="×";remove.title="删除这组对应";remove.setAttribute("aria-label","删除第 "+(i+1)+" 组对应");
+        remove.onclick=()=>{draft.fragments.splice(i,1);renderFragments();update();};row.append(label,remove);fragments.append(row);
+      });
+    };
     const update=()=>{
-      const [a,b,c,d]=selectors.map(s=>Number(s.value)),reference=template.value.track==="reference";
-      const start=reference?target[c]?.time_start:target[c]?.recording_start,end=reference?target[d]?.time_end:target[d]?.recording_end;
-      times[0].value=Number.isFinite(start)?start:"";times[1].value=Number.isFinite(end)?end:"";
-      selectedText.textContent=source.slice(a,b+1).map(m=>m.text).join("")+" → "+target.slice(c,d+1).map(m=>m.text).join("");
-    };selectors.forEach(s=>s.onchange=update);update();
-    const button=document.createElement("button");button.className="text-button";button.disabled=!!window.TextbookOffline;button.innerHTML='<i data-lucide="copy"></i><span>按所选对应生成候选</span>';
-    button.onclick=()=>{
-      try{const plans=TextbookCalibration.manualPlan(view.analysis,template,...selectors.map(s=>Number(s.value)),...times.map(t=>t.value===""?NaN:Number(t.value)));migrateCalibratedRecording(template,button,true,plans);}
+      const [a,b,c,d]=ranges;
+      pickers.forEach((picker,side)=>Array.from(picker.children).forEach(chip=>{const index=Number(chip.dataset.moraIndex);chip.setAttribute("aria-pressed",String(index>=ranges[side*2]&&index<=ranges[side*2+1]));}));
+      const from=a<0?"":source.slice(a,b+1).map(m=>m.text).join(""),to=c<0?"":target.slice(c,d+1).map(m=>m.text).join("");
+      const matching=!!from&&from===to&&b-a===d-c;
+      selectedText.textContent=from&&to?(matching?`${from} ↔ ${to}`:"两边所选假名不同，请选择相同片段"):"";
+      selectedText.classList.toggle("is-mismatch",Boolean(from&&to&&!matching));
+      add.disabled=!!window.TextbookOffline||!matching;
+      button.disabled=!!window.TextbookOffline||(!matching&&!draft.fragments.length);
+    };
+    const button=document.createElement("button");button.type="button";button.className="text-button";button.title="参考已校准句，按当前录音的节奏计算所选片段；结果先保存为候选。";button.innerHTML='<i data-lucide="copy"></i><span>复用所选片段</span>';
+    const selectedRanges=()=>{
+      const list=draft.fragments.map(range=>[...range]);
+      if(!add.disabled&&!list.some(range=>range.every((v,i)=>v===ranges[i])))list.push([...ranges]);
+      return list;
+    };
+    const validateRanges=list=>{
+      if(list.length>32)throw new Error("一次最多复用 32 个片段");
+      for(let i=0;i<list.length;i++)for(let j=0;j<i;j++)if(list[i][2]<=list[j][3]&&list[j][2]<=list[i][3])throw new Error("当前句的对应片段重叠，请删除重复对应；同一来源可对应不同位置。");
+      return list.flatMap(range=>TextbookCalibration.manualPlan(view.analysis,template,...range));
+    };
+    add.onclick=()=>{
+      try{const list=selectedRanges();validateRanges(list);draft.fragments=list;ranges.fill(-1);pickers.forEach(p=>p.resetSelection());renderFragments();update();}
       catch(error){$("analysisStatus").textContent=error.message;}
-    };editor.append(button);
+    };
+    button.onclick=()=>{
+      try{const plans=validateRanges(selectedRanges());migrateCalibratedRecording(template,button,true,plans);}
+      catch(error){$("analysisStatus").textContent=error.message;}
+    };editor.append(add,button);renderFragments();update();
   };select.onchange();
   if(view.analysis.candidate?.variant_template){
     const adopt=document.createElement("button");adopt.className="text-button";adopt.innerHTML='<i data-lucide="check"></i><span>启用共同部分校准（保留手动修改）</span>';
@@ -1062,7 +1421,7 @@ async function refreshAnalysisCalibrations(view){
   if(!window.TextbookCalibration)return;
   view.calibrationsLoading=true;
   try{
-    view.calibrations=await TextbookCalibration.find(view.sentence);
+    view.calibrations=await TextbookCalibration.find(view.sentence,view.analysis);
     const item=state.lesson.items.find(i=>i.id===view.sentence.exerciseId)||state.item;
     const items=state.lesson.items.filter(i=>i.title===item.title);view.collectionTitle=item.title;view.collectionItemCount=items.length;
     view.variantCalibrations=await TextbookCalibration.variants({...view.sentence,sourceCreated:view.take.created},view.analysis,titleCalibrationTexts(item),items.map(i=>i.id));
@@ -1072,30 +1431,39 @@ async function refreshAnalysisCalibrations(view){
 }
 async function automaticallyReuseCollection(view,force=false){
   if(state.analysisView!==view||!view.analysis||view.collectionBusy||isRecording()||window.TextbookOffline||read("autoCollectionCalibration","1")!=="1")return;
-  const entries=view.variantCalibrations||[];if(!entries.length)return;
+  const entries=view.variantCalibrations||[];
+    if(!entries.length&&!view.analysis.result.pitch.moras.some(m=>m.reference_timing_manual||m.timing_source==="variant-calibration-transfer")&&!MoraGroups.groups(view.analysis.result.pitch).some(g=>g.reference?.manual))return;
   const current=view.analysis,generation=state.analysisEpoch;
-  if(current.candidate){view.collectionStatus="已有未启用候选，请先处理候选，再自动匹配本组。";renderVariantCalibrationControls(view);return;}
-  const signature=await TextbookSync.hash(entries.map(e=>({key:e.template.value.key,moras:e.template.value.moras})).sort((a,b)=>a.key.localeCompare(b.key)));
+  const signature=await TextbookSync.hash({version:2,sources:entries.map(e=>({key:e.template.value.key,moras:e.template.value.moras,pauses:e.template.value.pauses})).sort((a,b)=>a.key.localeCompare(b.key)),
+    reference:current.result.pitch.moras.map(m=>m.reference_timing_manual?[m.time_start,m.time_end]:null),pauses:current.result.pitch.pause_intervals||{}});
   if(state.analysisView!==view||view.analysis!==current||(!force&&current.collection_reuse?.signature===signature&&["complete","partial","unmatched","restored"].includes(current.collection_reuse.status)))return;
   view.collectionBusy=true;view.collectionStatus="正在匹配本组已校准的音拍…";renderVariantCalibrationControls(view);
   const ticket=await window.desktopSession?.begin("collection-calibration");
   try{
-    let next=structuredClone(current),count=0;const sources=[],failures=[];
+    let next=structuredClone(current),count=0,referenceCount=0,recordingCount=0,pendingCount=0;const sources=[],failures=[];
     for(const selection of TextbookCalibration.automaticSelections(entries,current)){
       if(state.analysisView!==view||state.analysisEpoch!==generation||view.analysis!==current)return;
       try{
         const matched=await TextbookCalibration.transferVariant(view.take,next,selection.template,selection.plans,true);
-        count+=matched.variant_template.count;sources.push({...matched.variant_template});next=matched;
+        count+=matched.variant_template.count;
+        if(selection.template.value.track==="reference")referenceCount+=matched.variant_template.count;else recordingCount+=matched.variant_template.count;
+        sources.push({...matched.variant_template});next=matched;
       }catch(error){failures.push(error.message);}
     }
     if(state.analysisView!==view||state.analysisEpoch!==generation||view.analysis!==current)return;
-    const message=count?`自动复用 ${count} 拍，来自 ${sources.length} 份本组校准；迁移位置仍可手动调整。`:
+    try{
+      const mapped=await TextbookCalibration.realignRecording(view.take,next);
+      next=mapped.analysis;recordingCount+=mapped.count;pendingCount=mapped.pending;count+=mapped.count;
+    }catch(error){failures.push(error.message);}
+    if(state.analysisView!==view||state.analysisEpoch!==generation||view.analysis!==current)return;
+    if(current.candidate)next.candidate=structuredClone(current.candidate);
+    const message=count||pendingCount?collectionReuseSummary({referenceCount,recordingCount,pendingCount})+(failures.length?" 部分匹配未完成："+failures[0]:""):
       failures.length?"自动复用未完成："+failures[0]:"没有可确定的自动对应，请在下方手动选择来源与片段。";
-    if(count){
+    if(count||pendingCount){
       next=TextbookCalibration.protectCurrentManual(next,current);rebuildMoraSpans(next.result.pitch);
       const previous=structuredClone(current);delete previous.previous;delete previous.candidate;next.previous=previous;
     }
-    next.collection_reuse={signature,count,sources,message,status:failures.length?(count?"partial":"failed"):(count?"complete":"unmatched"),created:Date.now()};
+    next.collection_reuse={signature,count,referenceCount,recordingCount,pendingCount,sources,message,status:failures.length?(count?"partial":"failed"):(count?"complete":"unmatched"),created:Date.now()};
     await queueMoraEdit(async()=>{
       if(state.analysisView!==view||view.analysis!==current)return;
       if(!await persistTakeAnalysis(view.take,view.sentence,next))throw new Error("录音已不存在");
@@ -1133,16 +1501,25 @@ window.addEventListener("message",event=>{
     cancelPlayback();stopPreview();$("recordedAudio").pause();return;
   }
   if(event.data?.type==="textbook-analysis-ready") {state.analysisFrameReady=true;showAnalysisResult();}
+  if(event.data?.type==="textbook-analysis-live-practice") {void openLivePractice(event.data);return;}
+  if(event.data?.type==="textbook-analysis-trim-recording") {queueMoraEdit(()=>trimRecording(event.data));return;}
+  if(event.data?.type==="textbook-analysis-gain-recording") {queueMoraEdit(()=>applyRecordingGain(event.data));return;}
+  if(state.analysisView?.trimming||state.analysisView?.gainChanging)return;
+  if(event.data?.type==="textbook-analysis-mora-group") {queueMoraEdit(()=>saveMoraGroup(event.data));return;}
   if(event.data?.type==="textbook-analysis-manual-mora")queueMoraEdit(()=>saveManualMora(event.data));
   if(event.data?.type==="textbook-analysis-discard-mora")queueMoraEdit(()=>discardManualMora(event.data));
   if(event.data?.type==="textbook-analysis-undo-mora")queueMoraEdit(()=>undoManualMora(event.data));
   if(event.data?.type==="textbook-analysis-pause")queueMoraEdit(()=>saveManualPause(event.data));
   if(event.data?.type==="textbook-analysis-loops"){
-    const view=state.analysisView;
-    if(!view?.analysis||!Array.isArray(event.data.loops))return;
+    if(!state.analysisView?.analysis||!Array.isArray(event.data.loops))return;
     const loops=event.data.loops.filter(r=>["referenceAudio","recordingAudio"].includes(r.id)&&Number.isFinite(r.start)&&Number.isFinite(r.end)&&r.start>=0&&r.end>r.start);
-    view.analysis.loops=loops;
-    persistTakeAnalysis(view.take,view.sentence,view.analysis).catch(e=>$("analysisStatus").textContent="循环区间未保存："+e.message);
+    queueMoraEdit(async()=>{
+      const view=state.analysisView,updated=structuredClone(view.analysis);
+      updated.loops=loops;
+      if(!await persistTakeAnalysis(view.take,view.sentence,updated,{saveCalibration:false}))throw new Error("录音已不存在");
+      view.analysis=updated;view.take.analysis=updated;
+      const stored=state.takes.find(t=>t.id===view.take.id);if(stored)stored.analysis=updated;
+    }).catch(e=>$("analysisStatus").textContent="循环区间未保存："+e.message);
   }
 });
 function queueMoraEdit(edit) {
@@ -1150,37 +1527,122 @@ function queueMoraEdit(edit) {
   state.analysisEditQueue=state.analysisEditQueue.catch(()=>{}).then(()=>state.analysisView===view?edit():undefined);
   return state.analysisEditQueue;
 }
+async function trimRecording({start,revision}) {
+  const view=state.analysisView;
+  const fail=message=>{
+    if(state.analysisView!==view)return;
+    $("analysisStatus").textContent=message;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-trim-error",message},location.origin);
+  };
+  if(!view?.take||view.trimming||view.gainChanging)return;
+  const old=view.analysis||view.take.analysis,duration=old?.result?.audio_data?.recording_raw?.duration;
+  if(window.TextbookOffline||isRecording()||revision!==view.take.created||!Number.isFinite(start)||!(start>0&&start<duration)){
+    fail("当前无法截断，请选择录音内的起点，或重新打开分析。");return;
+  }
+  if([...state.analysisWork.keys()].some(key=>key.startsWith(view.take.id))){fail("请等待当前识别完成后再截断。");return;}
+  view.trimming=true;updateAnalysisEntry();let committed=false;
+  try {
+    cancelPlayback();stopPreview();$("recordedAudio").pause();
+    $("analysisStatus").textContent="正在截断录音…";
+    const original=await TextbookCalibration.readAudio(view.take,old,"recording");
+    const blob=await AudioTrim.fromBlob(original,start,old.result.audio_data.recording_raw.sample_rate||48000);
+    if(state.analysisView!==view||!$("analysisDialog").open)throw new Error("分析窗口已关闭，请重新打开后截断");
+    // Keep only the reference and its loop; recording timings belong to the discarded timeline.
+    const seed={reference:structuredClone(old.reference),loops:(old.loops||[]).filter(loop=>loop.id==="referenceAudio")};
+    const updated=await TextbookSync.overwriteRecordingAudio({...view.take,sentence:view.sentence},blob,seed);
+    committed=true;
+    updated.referenceBlob=view.take.referenceBlob;
+    view.take=updated;view.analysis=null;view.playbackRecordingBlob=blob;
+    view.collectionStatus="";
+    const index=state.takes.findIndex(take=>take.id===updated.id);if(index>=0)state.takes[index]=updated;
+    indexRecording(updated);updateRecordingProgress();if(index>=0)renderTakes();
+    if(state.analysisView!==view||!$("analysisDialog").open)return;
+    ++state.analysisEpoch;
+    $("analysisReference").textContent="已截断前 "+Number(start.toFixed(6))+" 秒";
+    $("analysisFrame").hidden=true;$("retryAnalysis").hidden=false;
+    void runSentenceAnalysis(false);
+  } catch(error){fail(committed?"录音已截断，但分析未更新："+error.message+"。请重新打开分析。":"截断未保存："+error.message+"。原录音未改动。");}
+  finally{view.trimming=false;updateAnalysisEntry();}
+}
+async function applyRecordingGain({db,revision}){
+  const view=state.analysisView;
+  const fail=message=>{
+    if(state.analysisView!==view)return;
+    $("analysisStatus").textContent=message;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-gain-error",message},location.origin);
+  };
+  if(!view?.analysis||!view.take||view.trimming||view.gainChanging)return;
+  if(window.TextbookOffline||isRecording()||revision!==view.take.created||!Number.isFinite(db)||db<=0){fail("录音已变化，请重新打开增益面板。");return;}
+  if([...state.analysisWork.keys()].some(key=>key.startsWith(view.take.id))){fail("请等待当前识别完成后再应用增益。");return;}
+  view.gainChanging=true;updateAnalysisEntry();
+  let committed=false;
+  try{
+    cancelPlayback();stopPreview();$("recordedAudio").pause();
+    const old=view.analysis,original=await TextbookCalibration.readAudio(view.take,old,"recording");
+    const prepared=await AudioGain.prepare(original,old.result.audio_data.recording_raw?.sample_rate||48000);
+    const blob=AudioGain.apply(prepared,db),analysis=AudioGain.analysis(old,db);
+    if(Math.abs(prepared.buffer.duration-old.result.audio_data.recording_raw.duration)>.02)throw new Error("录音与当前分析的时长不一致，请重新识别后再调整增益");
+    const referenceKey=await TextbookSync.prepareAnalysisAudio(view.take,old);
+    if(state.analysisView!==view||!$("analysisDialog").open)throw new Error("分析窗口已关闭");
+    const updated=await TextbookSync.overwriteRecordingAudio({...view.take,sentence:view.sentence},blob,analysis,{referenceKey});
+    committed=true;
+    updated.referenceBlob=view.take.referenceBlob;
+    view.take=updated;view.analysis=analysis;view.playbackRecordingBlob=blob;
+    const index=state.takes.findIndex(t=>t.id===updated.id);if(index>=0)state.takes[index]=updated;
+    indexRecording(updated);updateRecordingProgress();if(index>=0)renderTakes();
+    ++state.analysisEpoch;
+    if(state.analysisView===view&&$("analysisDialog").open){
+      $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-gain-saved",recordingBlob:blob,recordingRevision:updated.created,result:analysis.result,loops:analysis.loops||[]},location.origin);
+      renderAnalysisRevisionControls();$("analysisStatus").textContent=`录音增益 +${db} dB 已应用，音拍校准保留。`;
+    }
+  }catch(error){fail(committed?"增益已保存，但界面更新失败，请重新打开分析："+error.message:"增益未保存："+error.message+"。原录音未改动。");}
+  finally{view.gainChanging=false;updateAnalysisEntry();}
+}
 function sourceMoraSpans(pitch,track) {
-  return pitch.moras.flatMap((mora,index)=>{
-    const reference=track==="reference";
-    if(reference?mora.reference_timing_discarded:mora.recording_match==="discarded")return [];
-    const old=pitch.mora_spans.find(span=>span.index===index);
-    const start=reference?mora.time_start:mora.recording_start??old?.recording_start;
-    const end=reference?mora.time_end:mora.recording_end??old?.recording_end;
-    return Number.isFinite(start)&&Number.isFinite(end)&&end>start?[{index,recording_start:start,recording_end:end,manual:reference?!!mora.reference_timing_manual:mora.recording_match==="manual"}]:[];
+  return MoraGroups.units(pitch).flatMap(({index,end_index})=>{
+    const interval=MoraGroups.interval(pitch,index,track);
+    return interval?[{index,end_index,recording_start:interval.start,recording_end:interval.end,manual:MoraGroups.info(pitch,index,track).manual}]:[];
   });
 }
 function rebuildMoraSpans(pitch) {
-  const reference=new Map(sourceMoraSpans(pitch,"reference").map(span=>[span.index,span]));
-  pitch.mora_spans=sourceMoraSpans(pitch,"recording").flatMap(span=>{
-    const target=reference.get(span.index);if(!target)return [];
-    const old=pitch.mora_spans.find(item=>item.index===span.index);
-    return [{...old,...span,reference_start:target.recording_start,reference_end:target.recording_end}];
-  }).sort((a,b)=>a.recording_start-b.recording_start);
+  MoraGroups.rebuild(pitch);
+}
+async function saveMoraGroup({from,to,index,split=false,track="recording"}) {
+  const view=state.analysisView;if(!view?.analysis?.result?.pitch)return;
+  try {
+    if(!["reference","recording"].includes(track))throw new Error("音轨无效");
+    const updated=structuredClone(view.analysis),pitch=updated.result.pitch;
+    const selected=split?MoraGroups.group(pitch,index)?.start_index:Math.min(from,to);
+    if(!Number.isInteger(selected))throw new Error("请选择有效的音拍");
+    rememberMoraEdit(updated,view.analysis,track,selected);
+    if(split)MoraGroups.split(pitch,index);else MoraGroups.merge(pitch,from,to);
+    MoraGroups.rebuild(pitch);
+    pitch.calibration_edits={...pitch.calibration_edits,reference:Date.now(),recording:Date.now()};
+    if(!await persistTakeAnalysis(view.take,view.sentence,updated,{deferCalibration:true}))throw new Error("录音已不存在");
+    view.analysis=updated;view.take.analysis=updated;
+    const stored=state.takes.find(t=>t.id===view.take.id);if(stored)stored.analysis=updated;
+    if(state.analysisView!==view)return;
+    const message=split?"已拆分":"已合并";
+    $("analysisStatus").textContent=message;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",result:updated.result,track,index:selected,resetDrafts:true,groupChanged:true,message},location.origin);
+    renderAnalysisRevisionControls();
+  }catch(error){if(state.analysisView===view)$("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-group-error",message:"音拍分组未保存："+error.message},location.origin);}
 }
 async function discardManualMora({index,track="recording"}) {
   const view=state.analysisView,analysis=view?.analysis,pitch=analysis?.result?.pitch;
   const fail=message=>{
+    if(state.analysisView!==view)return;
     $("analysisStatus").textContent=message;
     $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-error",index,message,track},location.origin);
   };
   if(!["reference","recording"].includes(track)||!Number.isInteger(index)||!pitch?.moras?.[index]){fail("音拍无效，请重新打开分析。");return;}
   const span=sourceMoraSpans(pitch,track).find(item=>item.index===index);
-  if(!span){fail("此音拍没有可废弃的区间。");return;}
   const updated=structuredClone(analysis),mora=updated.result.pitch.moras[index];
   rememberMoraEdit(updated,analysis,track,index);
-  mora[track+"_discarded_interval"]={start:span.recording_start,end:span.recording_end};
-  if(track==="reference") {
+  if(span)mora[track+"_discarded_interval"]={start:span.recording_start,end:span.recording_end};
+  if(MoraGroups.group(updated.result.pitch,index)){
+    MoraGroups.write(updated.result.pitch,index,track,{start:null,end:null,manual:false,discarded:true,edited:true,issue:"请手动指定整组的新区间"});
+  }else if(track==="reference") {
     mora.reference_timing_discarded=true;mora.reference_timing_manual=false;
     mora.time_start=null;mora.time_end=null;
   } else {
@@ -1188,37 +1650,44 @@ async function discardManualMora({index,track="recording"}) {
   }
   rebuildMoraSpans(updated.result.pitch);
   try {
-    if(!await persistTakeAnalysis(view.take,view.sentence,updated))throw new Error("录音已不存在");
+    if(!await persistTakeAnalysis(view.take,view.sentence,updated,{deferCalibration:true}))throw new Error("录音已不存在");
     view.analysis=updated;view.take.analysis=updated;
     const stored=state.takes.find(t=>t.id===view.take.id);if(stored)stored.analysis=updated;
-    $("analysisStatus").textContent=`第 ${index+1} 拍的${track==="reference"?"标准发音":"录音"}区间已废弃，原始音频保留。`;
-    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index,result:updated.result,track,message:"区间已废弃；设置有效 A/B 并保存即可恢复。"},location.origin);
+    if(state.analysisView!==view)return;
+    $("analysisStatus").textContent=`第 ${index+1} 拍的${track==="reference"?"标准发音":"录音"}区间待手动设定，原始音频保留。`;
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index,result:updated.result,track,message:"旧定位已清除，请手动指定新的 A/B 区间并保存。"},location.origin);
     renderAnalysisRevisionControls();
-  } catch(e){fail("废弃区间保存失败："+e.message);}
+  } catch(e){fail("重制区间未保存："+e.message);}
 }
 function rememberMoraEdit(updated,previous,track,index) {
   const pitch=previous.result.pitch;
   updated.result.pitch.manual_history=[...(pitch.manual_history||[]),{
-    created:Date.now(),track,index,moras:structuredClone(pitch.moras),mora_spans:structuredClone(pitch.mora_spans),pause_intervals:structuredClone(pitch.pause_intervals||{}),
+    created:Date.now(),track,index,moras:structuredClone(pitch.moras),mora_spans:structuredClone(pitch.mora_spans),mora_groups:structuredClone(pitch.mora_groups||[]),pause_intervals:structuredClone(pitch.pause_intervals||{}),
   }].slice(-30);
   updated.result.pitch.manual_revision=(pitch.manual_revision||0)+1;
+  updated.result.pitch.calibration_edits={...pitch.calibration_edits,[track]:Date.now()};
 }
 async function undoManualMora({track="recording"}={}) {
   const view=state.analysisView,analysis=view?.analysis,history=analysis?.result?.pitch?.manual_history;
   if(!history?.length)return;
   const updated=structuredClone(analysis),snapshot=updated.result.pitch.manual_history.pop();
-  Object.assign(updated.result.pitch,{moras:snapshot.moras,mora_spans:snapshot.mora_spans,pause_intervals:snapshot.pause_intervals||{},manual_revision:(analysis.result.pitch.manual_revision||0)+1});
+  Object.assign(updated.result.pitch,{moras:snapshot.moras,mora_spans:snapshot.mora_spans,mora_groups:snapshot.mora_groups||[],pause_intervals:snapshot.pause_intervals||{},manual_revision:(analysis.result.pitch.manual_revision||0)+1});
+  updated.result.pitch.calibration_edits={...updated.result.pitch.calibration_edits,[snapshot.track||track]:Date.now()};
+  if(JSON.stringify(analysis.result.pitch.mora_groups||[])!==JSON.stringify(snapshot.mora_groups||[]))
+    updated.result.pitch.calibration_edits={...updated.result.pitch.calibration_edits,reference:Date.now(),recording:Date.now()};
   try {
-    if(!await persistTakeAnalysis(view.take,view.sentence,updated))throw new Error("录音已不存在");
+    if(!await persistTakeAnalysis(view.take,view.sentence,updated,{deferCalibration:true}))throw new Error("录音已不存在");
     view.analysis=updated;view.take.analysis=updated;
     const stored=state.takes.find(t=>t.id===view.take.id);if(stored)stored.analysis=updated;
+    if(state.analysisView!==view)return;
     $("analysisStatus").textContent="已撤销上一次音拍调整。";
-    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index:snapshot.index,result:updated.result,track,resetDrafts:true},location.origin);
-  } catch(e){$("analysisStatus").textContent="撤销未保存："+e.message;}
+    $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index:snapshot.index,result:updated.result,track,resetDrafts:true,undoSaved:true,message:"已撤销"},location.origin);
+  } catch(e){if(state.analysisView===view)$("analysisStatus").textContent="撤销未保存："+e.message;}
 }
 async function saveManualPause({track="recording",id,after_index,start,end,remove=false}) {
   const view=state.analysisView,analysis=view?.analysis,pitch=analysis?.result?.pitch;
   const fail=message=>{
+    if(state.analysisView!==view)return;
     $("analysisStatus").textContent=message;
     $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-pause-error",message},location.origin);
   };
@@ -1231,10 +1700,10 @@ async function saveManualPause({track="recording",id,after_index,start,end,remov
       !Number.isFinite(start)||!Number.isFinite(end)||start<0||end-start<.02||!Number.isFinite(duration)||end>duration){fail("请选择有效的中间停顿区间，至少 0.02 秒");return;}
     if(old&&old.after_index!==after_index){fail("调整现有停顿的位置时，请先删除，再在新的两拍之间添加");return;}
     if(saved.some(p=>p.id!==id&&(p.after_index===after_index||start<p.end&&end>p.start))){fail("此位置已有停顿，或与其他停顿重叠，请选择已有停顿调整");return;}
-    const spans=sourceMoraSpans(pitch,track),previous=spans.find(s=>s.index===after_index),next=spans.find(s=>s.index===after_index+1);
+    const spans=sourceMoraSpans(pitch,track),previous=spans.find(s=>s.end_index===after_index),next=spans.find(s=>s.index===after_index+1);
     if(!previous||!next){fail("停顿两边的音拍需要先设置有效区间");return;}
     if(start-previous.recording_start<=.016||next.recording_end-end<=.016){fail("停顿会覆盖整拍或使音拍过短，请调整 A/B 或选择正确的两拍");return;}
-    if(spans.some(s=>s.index!==after_index&&s.index!==after_index+1&&start<s.recording_end&&end>s.recording_start)){fail("停顿跨过了其他音拍，请缩小区间");return;}
+    if(spans.some(s=>s.end_index!==after_index&&s.index!==after_index+1&&start<s.recording_end&&end>s.recording_start)){fail("停顿跨过了其他音拍，请缩小区间");return;}
   }
   const updated=structuredClone(analysis),nextPitch=updated.result.pitch;
   rememberMoraEdit(updated,analysis,track,remove?old.after_index:after_index);
@@ -1243,105 +1712,51 @@ async function saveManualPause({track="recording",id,after_index,start,end,remov
   if(!remove){
     nextPitch.pause_intervals[track].push({id:id||crypto.randomUUID(),after_index,start,end,confirmed:true});
     nextPitch.pause_intervals[track].sort((a,b)=>a.start-b.start);
-    const previous=nextPitch.moras[after_index],next=nextPitch.moras[after_index+1];
-    if(track==="reference"){
-      Object.assign(previous,{time_end:start,reference_timing_manual:true,timing_source:"manual",timing_issue:""});
-      Object.assign(next,{time_start:end,reference_timing_manual:true,timing_source:"manual",timing_issue:""});
-    }else{
-      Object.assign(previous,{recording_end:start,recording_match:"manual",recording_timing_source:"manual",recording_timing_issue:""});
-      Object.assign(next,{recording_start:end,recording_match:"manual",recording_timing_source:"manual",recording_timing_issue:""});
-    }
+    const previous=MoraGroups.interval(nextPitch,after_index,track),next=MoraGroups.interval(nextPitch,after_index+1,track);
+    MoraGroups.write(nextPitch,after_index,track,{...previous,end:start,manual:true,edited:true,source:"manual",issue:""});
+    MoraGroups.write(nextPitch,after_index+1,track,{...next,start:end,manual:true,edited:true,source:"manual",issue:""});
   }
   rebuildMoraSpans(nextPitch);
   try {
-    if(!await persistTakeAnalysis(view.take,view.sentence,updated))throw new Error("录音已不存在");
+    if(!await persistTakeAnalysis(view.take,view.sentence,updated,{deferCalibration:true}))throw new Error("录音已不存在");
     view.analysis=updated;view.take.analysis=updated;
     const stored=state.takes.find(t=>t.id===view.take.id);if(stored)stored.analysis=updated;
+    if(state.analysisView!==view)return;
     const message=remove?"停顿已删除，相邻音拍间的空隙保留，可继续调整或撤销。":"停顿已保存，两边音拍边界已接合。";
     $("analysisStatus").textContent=message;
     $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",result:updated.result,track,resetDrafts:true,pauseSaved:true,message},location.origin);
-    await refreshAnalysisCalibrations(view);
+    renderAnalysisRevisionControls();
   }catch(error){fail("停顿未保存："+error.message);}
 }
-function fitManualMoraInterval(pitch,index,start,end,duration,joins={},resolution="",allowManual=false) {
+function fitManualMoraInterval(pitch,index,start,end,duration) {
+  if(!Number.isFinite(start)||!Number.isFinite(end)||!Number.isFinite(duration)||start<0||end>duration+.01||end<=start)
+    return {error:"请选择音频范围内有效的 A/B 区间。"};
   const outside=pitch.mora_spans.filter(span=>span.index!==index).map(span=>({...span}));
-  const previous=outside.find(span=>span.index===index-1),next=outside.find(span=>span.index===index+1);
-  const conflicts=outside.filter(span=>start<span.recording_end&&end>span.recording_start);
-  if(resolution==="share") {
-    if(conflicts.some(span=>span.index!==index-1&&span.index!==index+1))return {error:"跨越了多个音拍，不能共用一个边界。请缩小区间或废弃冲突的自动区间。"};
-    joins={...joins,previous:joins.previous||conflicts.some(s=>s.index===index-1),next:joins.next||conflicts.some(s=>s.index===index+1)};
-  }
-  if(resolution==="discard-auto") {
-    if(conflicts.some(span=>span.manual))return {error:"冲突包含手动确认的音拍，不能自动废弃。请调整区间或明确选择共用边界。"};
-    for(const span of conflicts)outside.splice(outside.indexOf(span),1);
-    joins={};
-  }
-  if(!resolution&&conflicts.some(span=>!(joins.previous&&span.index===index-1)&&!(joins.next&&span.index===index+1)))
-    return {error:"与第 "+conflicts.map(s=>s.index+1).join("、")+" 拍冲突，请选择共用边界或废弃冲突的自动区间。",conflicts};
-  const changedManual=[...(joins.previous&&previous&&previous.recording_end!==start?[previous]:[]),...(joins.next&&next&&next.recording_start!==end?[next]:[])].filter(s=>s.manual);
-  if(changedManual.length&&!allowManual)return {error:"会修改第 "+changedManual.map(s=>s.index+1).join("、")+" 拍的手动边界，请勾选确认后保存。",conflicts:changedManual};
-  if(joins.previous) {
-    if(!previous)return {error:"上一音拍尚无时间，请先设置上一音拍。"};
-    if(start-previous.recording_start<=.016)return {error:"A 会使上一音拍区间过短，请向右调整。"};
-    previous.recording_end=start;
-  }
-  if(joins.next) {
-    if(!next)return {error:"下一音拍尚无时间，请先设置下一音拍。"};
-    if(next.recording_end-end<=.016)return {error:"B 会使下一音拍区间过短，请向左调整。"};
-    next.recording_start=end;
-  }
-  const before=outside.filter(span=>span.index<index).sort((a,b)=>b.recording_end-a.recording_end)[0];
-  const after=outside.filter(span=>span.index>index).sort((a,b)=>a.recording_start-b.recording_start)[0];
-  const lower=before?.recording_end??0,upper=after?.recording_start??duration;
-  if(start<lower)return {error:`A 进入第 ${before.index+1} 拍，起点不能早于 ${lower.toFixed(3)} 秒。`};
-  if(end>upper)return {error:after?`B 进入第 ${after.index+1} 拍，终点不能晚于 ${upper.toFixed(3)} 秒。`:"B 超过录音末尾。"};
-  const overlap=outside.find(span=>start<span.recording_end&&end>span.recording_start);
-  if(overlap)return {error:`区间与第 ${overlap.index+1} 拍重叠，请调整 A/B。`};
-  if(end-start<=.016)return {error:"相邻音拍之间的可用区间太短，请重新选择 A/B。"};
-  return {start,end,outside,discarded:resolution==="discard-auto"?conflicts.map(s=>s.index):[],joined:[...(joins.previous?[index-1]:[]),...(joins.next?[index+1]:[])]};
+  return {start,end,outside,discarded:[],joined:[],warnings:[]};
 }
-async function saveManualMora({index,start,end,joins={},track="recording",resolution="",allowManual=false}) {
+async function saveManualMora({index,start,end,track="recording"}) {
   const view=state.analysisView,analysis=view?.analysis,pitch=analysis?.result?.pitch;
   const reference=track==="reference",mora=pitch?.moras?.[index];
-  const restoring=reference?!!mora?.reference_timing_discarded:mora?.recording_match==="discarded";
+  const restoring=MoraGroups.info(pitch,index,track).discarded;
   const duration=analysis?.result?.audio_data?.[reference?"reference":"recording_raw"]?.duration;
   const fail=message=>{
-    if(restoring)message="恢复未保存，音拍仍为废弃状态："+message;
+    if(state.analysisView!==view)return;
+    if(restoring)message="新区间未保存，音拍仍待手动设定："+message;
     $("analysisStatus").textContent=message;
     $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-error",index,message,track},location.origin);
   };
+  try {
   if(!["reference","recording"].includes(track)||!Number.isInteger(index)||!mora||!Number.isFinite(start)||!Number.isFinite(end)||
-     !Number.isFinite(duration)||start<0||end<=start+.015||end>duration+.01){fail("请选择有效的音频起止时间。");return;}
+     !Number.isFinite(duration)||start<0||end<=start||end>duration+.01){fail("请选择有效的音频起止时间。");return;}
   const intervals={mora_spans:sourceMoraSpans(pitch,track)};
-  const fitted=fitManualMoraInterval(intervals,index,start,end,duration,joins,resolution,allowManual);
+  const fitted=fitManualMoraInterval(intervals,index,start,end,duration);
   if(fitted.error){fail(fitted.error);return;}
-  const pauses=pitch.pause_intervals?.[track]||[];
-  const proposed=[{recording_start:fitted.start,recording_end:fitted.end},...fitted.outside];
-  if(pauses.some(p=>proposed.some(s=>s.recording_start<p.end-.000001&&s.recording_end>p.start+.000001))){
-    fail("音拍区间进入已确认的停顿，请先调整或删除该停顿。");return;
-  }
-  ({start,end}=fitted);const spans=fitted.outside;
+  ({start,end}=fitted);
   const updated=structuredClone(analysis),updatedPitch=updated.result.pitch;
   rememberMoraEdit(updated,analysis,track,index);
-  for(const discardedIndex of fitted.discarded) {
-    const old=intervals.mora_spans.find(s=>s.index===discardedIndex),item=updatedPitch.moras[discardedIndex];
-    item[track+"_discarded_interval"]={start:old.recording_start,end:old.recording_end};
-    if(reference)Object.assign(item,{reference_timing_discarded:true,reference_timing_manual:false,time_start:null,time_end:null});
-    else Object.assign(item,{recording_match:"discarded",recording_start:null,recording_end:null});
-  }
-  for(const neighborIndex of fitted.joined) {
-    const span=spans.find(item=>item.index===neighborIndex),neighbor=updatedPitch.moras[neighborIndex];
-    if(!neighbor){fail("相邻音拍数据不完整，请重新打开分析。");return;}
-    if(reference) {
-      neighbor.reference_timing_manual=true;neighbor.time_start=span.recording_start;neighbor.time_end=span.recording_end;
-      neighbor.timing_issue="";
-    } else {
-      neighbor.recording_match="manual";
-      neighbor.recording_start=span.recording_start;neighbor.recording_end=span.recording_end;
-      neighbor.recording_timing_issue="";
-    }
-  }
-  if(reference) {
+  const joined=MoraGroups.group(updatedPitch,index);
+  if(joined){joined[track]={start,end,manual:true,discarded:false,edited:true,issue:"",source:"manual"};}
+  else if(reference) {
     updatedPitch.moras[index].reference_timing_manual=true;
     updatedPitch.moras[index].reference_timing_discarded=false;
     updatedPitch.moras[index].time_start=start;updatedPitch.moras[index].time_end=end;
@@ -1356,43 +1771,78 @@ async function saveManualMora({index,start,end,joins={},track="recording",resolu
   }
   delete updatedPitch.moras[index][track+"_discarded_interval"];
   rebuildMoraSpans(updatedPitch);
-  try {
-    if(!await persistTakeAnalysis(view.take,view.sentence,updated))throw new Error("录音已不存在");
+    if(!await persistTakeAnalysis(view.take,view.sentence,updated,{deferCalibration:true}))throw new Error("录音已不存在");
     view.analysis=updated;view.take.analysis=updated;
     const stored=state.takes.find(t=>t.id===view.take.id);
     if(stored)stored.analysis=updated;
-    const message=restoring?"音拍已恢复并保存，废弃状态已清除。":"音拍调整已保存在本机。";
+    if(state.analysisView!==view)return;
+    const message=restoring?"音拍区间已重制并保存，已手动确认。":"音拍调整已保存在本机。";
     $("analysisStatus").textContent=(reference?"标准发音":"我的录音")+message;
     $("analysisFrame").contentWindow.postMessage({type:"textbook-analysis-manual-saved",index,result:updated.result,track,message},location.origin);
-    await refreshAnalysisCalibrations(view);
+    renderAnalysisRevisionControls();
   } catch(e) {
     fail("手动对应保存失败："+e.message);
   }
 }
+function analysisReferenceLabel(mine) {
+  return mine?"我的音色":listeningMode?"教材原音":"原配音";
+}
 async function runSentenceAnalysis(force=false,engine="current") {
-  const view=state.analysisView;if(!view?.take)return;
-  const generation=++state.analysisEpoch,key=analysisKey(view.sentence),workKey=view.take.id+key+engine;
+  const view=state.analysisView;if(!view?.take||view.analysisLoading||view.gainChanging||view.trimming&&force)return;
+  const generation=++state.analysisEpoch;
+  const mine=$("textbookAnalysisReference")?.value==='mine'&&!window.TextbookOffline&&Boolean(myVoicePlayback);
+  view.analysisLoading=true;
+  updateAnalysisEntry();
   renderAnalysisRevisionControls();
   $("retryAnalysis").hidden=true;$("analysisFrame").hidden=true;
-  $("analysisStatus").textContent="正在准备本句的标准配音…";
+  $("analysisFrame").contentWindow?.postMessage({type:"textbook-analysis-pause"},location.origin);
+  const referenceLabel=analysisReferenceLabel(mine);
+  $("analysisStatus").textContent="正在准备"+referenceLabel+"参考…";
+  $("analysisReference").textContent="分析参考："+referenceLabel;
+  let phase="准备"+referenceLabel+"参考";
   try {
-    const cached=view.take.analysis,oldKey=JSON.stringify(["textbook-analysis-v6-manual",view.sentence.lessonId,view.sentence.index,view.sentence.role,view.sentence.text]);
-    let analysis=!force&&!cached?.portableUnavailable&&(cached?.key===key||cached?.key===oldKey)&&
+    const desiredReference=mine?await myVoicePlayback.analysisReference({role:view.sentence.role,ja:view.sentence.text,reference:view.sentence.reference},view.sentence.settings,
+      {valid:()=>generation===state.analysisEpoch&&state.analysisView===view}):null;
+    if(generation!==state.analysisEpoch||state.analysisView!==view)return;
+    const key=analysisKey(view.sentence,desiredReference),workKey=view.take.id+key+engine;
+    const storedAnalysis=view.take.analysis;
+    const oldKey=mine?null:JSON.stringify(["textbook-analysis-v6-manual",view.sentence.lessonId,view.sentence.index,view.sentence.role,view.sentence.text]);
+    const cached=window.TextbookVoicePlayback?.findAnalysis(storedAnalysis,key,oldKey)||
+      ((storedAnalysis?.key===key||oldKey&&storedAnalysis?.key===oldKey)?storedAnalysis:null);
+    let analysis=!force&&!cached?.portableUnavailable&&cached&&
       cached?.result?.analysis_version==="mora-alignment-v3-manual"?cached:null;
-    let saved=true;
+    let saved=true,audioNotice="";
+    if(analysis){
+      phase="读取回放音频";
+      try{view.take.referenceBlob=await TextbookCalibration.readAudio(view.take,analysis,"reference");}
+      catch(error){delete view.take.referenceBlob;audioNotice=" 标准音回放不可用："+error.message;}
+      try{view.playbackRecordingBlob=await TextbookCalibration.readAudio(view.take,analysis,"recording");}
+      catch(error){audioNotice+=" 录音回放不可用："+error.message;}
+      if(analysis.reference?.filename!==storedAnalysis?.reference?.filename){
+        window.TextbookVoicePlayback?.preserveAnalysis(analysis,storedAnalysis);
+        saved=await persistTakeAnalysis(view.take,view.sentence,analysis,{saveCalibration:false});
+        if(saved)view.take.analysis=analysis;
+      }
+    }
     if(!analysis) {
       if(!state.analysisWork.has(workKey)) {
         const pending=(async()=>{
           // Reanalysis keeps the exact reference audio so versions share the same timeline.
-          const reference=cached?.reference?.filename?cached.reference:await audioFor({role:view.sentence.role,ja:view.sentence.text},view.sentence.settings);
-          if(!reference.audio_url&&reference.filename)reference.audio_url="/media/reference/"+encodeURIComponent(reference.filename);
+          const reference={...(desiredReference||cached?.reference?.filename&&cached.reference||await audioFor({role:view.sentence.role,ja:view.sentence.text,reference:view.sentence.reference},view.sentence.settings))};
+          if(reference.filename)reference.audio_url="/media/reference/"+encodeURIComponent(reference.filename);
           if(!reference.filename||!reference.audio_url)throw new Error("标准音频信息不完整，请重试。");
+          phase="读取录音";
+          const recordingBlob=await TextbookCalibration.readAudio(view.take,cached,"recording");
+          view.playbackRecordingBlob=recordingBlob;
+          phase="读取标准音频";
+          const referenceBlob=await TextbookCalibration.readAudio(view.take,{reference},"reference");
           if(state.analysisView===view&&$("analysisDialog").open)$("analysisStatus").textContent="正在本机识别并分析音频…";
           const form=new FormData();
-          const extension=view.take.blob.type.includes("mp4")?"m4a":view.take.blob.type.includes("wav")?"wav":"webm";
-          form.append("audio",view.take.blob,"recording."+extension);
+          const extension=recordingBlob.type.includes("mp4")?"m4a":recordingBlob.type.includes("wav")?"wav":"webm";
+          form.append("audio",recordingBlob,"recording."+extension);
           form.append("target",view.sentence.text);form.append("reference_filename",reference.filename);
           form.append("alignment_engine",engine);
+          phase=engine==="phone_trial"?"本机 MFA 分析":"本机 DTW 分析";
           const response=await fetch("/api/transcribe",{method:"POST",body:form});
           const result=await response.json().catch(()=>({}));
           if(!response.ok)throw new Error(typeof result.detail==="string"?result.detail:"本机分析失败，请重试。");
@@ -1400,14 +1850,21 @@ async function runSentenceAnalysis(force=false,engine="current") {
           if(result.analysis_version!=="mora-alignment-v3-manual")throw new Error("本地服务还是旧版本。请先退出并重新打开日语跟读 App，再分析这条录音。");
           if(result.audio_data?.recording_raw)delete result.audio_data.recording;
           let analysis={key,reference,result,created:Date.now(),loops:structuredClone(cached?.loops||[])};
-          const referenceResponse=await fetch(reference.audio_url);
-          if(referenceResponse.ok&&!view.take.referenceBlob)view.take.referenceBlob=await referenceResponse.blob();
+          view.take.referenceBlob=referenceBlob;
+          phase="保存分析";
           if(window.TextbookCalibration)try{
             const reused=await TextbookCalibration.reuseReference(view.take,view.sentence,analysis);
             analysis=reused.analysis;if(reused.count)rebuildMoraSpans(analysis.result.pitch);
           }catch(error){analysis.calibration_notice="标准音校准未复用："+error.message;}
-          if(cached&&force)analysis={...structuredClone(cached),candidate:analysis};
-          let saved=false;try{saved=await persistTakeAnalysis(view.take,view.sentence,analysis);}catch{}
+          const calculated=analysis;
+          let saved=false;
+          await queueMoraEdit(async()=>{
+            if(generation!==state.analysisEpoch||state.analysisView!==view)return;
+            // Merge a completed trial into the latest committed analysis, not its launch snapshot.
+            analysis=cached?.result&&force?{...structuredClone(view.analysis||view.take.analysis||cached),candidate:calculated}:calculated;
+            try{saved=await persistTakeAnalysis(view.take,view.sentence,analysis);}catch{}
+            if(state.analysisView===view)view.analysis=analysis;
+          });
           if(saved) {
             const stored=state.takes.find(t=>t.id===view.take.id);
             if(stored){stored.analysis=analysis;stored.sentence=view.sentence;}
@@ -1424,15 +1881,30 @@ async function runSentenceAnalysis(force=false,engine="current") {
     if(generation!==state.analysisEpoch||state.analysisView!==view||!$("analysisDialog").open)return;
     view.analysis=analysis;await refreshAnalysisCalibrations(view);
     if(generation!==state.analysisEpoch||state.analysisView!==view||!$("analysisDialog").open)return;
+    $("analysisReference").textContent="分析参考："+referenceLabel;
     showAnalysisResult();
     const warning=analysis.result.audio_data?.available?"":" 音频曲线暂不可用。";
-    $("analysisStatus").textContent=(saved?(analysis.candidate?"新分析已保存为候选，原有修订保留。":"分析结果已保存在本机。") :"分析完成，但本机保存失败；原始录音未改动。")+warning;
+    $("analysisStatus").textContent=(saved?(analysis.candidate?"新分析已保存为候选，原有修订保留。":"分析结果已保存在本机。") :"分析完成，但本机保存失败；原始录音未改动。")+warning+audioNotice;
     $("retryAnalysis").hidden=false;
     await automaticallyReuseCollection(view);
   } catch(e) {
     if(generation!==state.analysisEpoch||state.analysisView!==view||!$("analysisDialog").open)return;
-    $("analysisStatus").textContent=e.message;$("retryAnalysis").hidden=false;
-    if(view.analysis)showAnalysisResult();
+    const message=/^(Load failed|Failed to fetch|NetworkError.*)$/.test(e.message)?"音频请求未完成，请确认日语跟读 App 仍在运行。":e.message;
+    $("analysisStatus").textContent=phase+"失败："+message;$("retryAnalysis").hidden=false;
+    if(view.analysis){
+      const previousMine=view.analysis.reference?.kind==="my-voice";
+      if($("textbookAnalysisReference"))$("textbookAnalysisReference").value=previousMine?"mine":"original";
+      save("analysisReference",previousMine?"mine":"original");
+      $("analysisReference").textContent="分析参考："+analysisReferenceLabel(previousMine);
+      showAnalysisResult();
+    }
+  }
+  finally {
+    if(generation===state.analysisEpoch&&state.analysisView===view){
+      view.analysisLoading=false;
+      renderAnalysisRevisionControls();
+      updateAnalysisEntry();
+    }
   }
 }
 $("analyzeRecording").onclick=()=>{
@@ -1441,20 +1913,33 @@ $("analyzeRecording").onclick=()=>{
   if(take?.sentence&&take.sentence.text!==current.text&&!confirm("这条录音对应修改前的文本，将按下面的原句分析。继续吗？\n"+take.sentence.text))return;
   const sentence={...(take?.sentence||current)};
   if(!sentence.settings)sentence.settings=current.settings;
+  if(!sentence.reference&&sentence.text===current.text&&current.reference)sentence.reference=current.reference;
   cancelPlayback();stopPreview();$("recordedAudio").pause();
   state.analysisView={take,sentence};state.analysisFrameReady=false;
+  if($("textbookAnalysisReference")){
+    $("textbookAnalysisReference").value=!window.TextbookOffline&&read('analysisReference')==='mine'?'mine':'original';
+    $("textbookAnalysisReference").disabled=Boolean(window.TextbookOffline);
+  }
   $("analysisTitle").textContent="第 "+(sentence.index+1)+" 句 · 跟读分析";
-  $("analysisContext").textContent="第 "+state.lesson.number+" 课 / "+state.item.title+" / "+sentence.role;
+  $("analysisContext").textContent=(listeningMode?state.item.unit+" · "+state.item.number:"第 "+state.lesson.number+" 课")+" / "+state.item.title+" / "+sentence.role;
   $("analysisSentence").textContent=sentence.text;
   const voice=state.voices.find(v=>v.style_id===sentence.settings?.style_id);
-  $("analysisReference").textContent="标准配音："+(voice?voice.speaker_name+" · "+styleLabel(voice.style_name):"原角色音色")+
+  const referenceChoice=$("textbookAnalysisReference");
+  const mine=referenceChoice?referenceChoice.value==="mine":take?.analysis?.reference?.kind==="my-voice";
+  $("analysisReference").textContent=(listeningMode?"分析参考："+analysisReferenceLabel(mine):"标准配音："+(voice?voice.speaker_name+" · "+styleLabel(voice.style_name):"原角色音色"))+
     (take?" · "+new Date(take.created).toLocaleString("zh-CN")+" 的录音":"");
-  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=calibration-37";
+  $("analysisFrame").hidden=true;$("analysisFrame").src="index.html?textbook-result=1&v=analysis-reference-2";
   $("analysisDialog").showModal();
   if(take)runSentenceAnalysis();else {$("analysisStatus").textContent="本句暂无录音";$("retryAnalysis").hidden=true;}
   updateAnalysisEntry();
 };
 $("retryAnalysis").onclick=()=>runSentenceAnalysis(true);
+if($("textbookAnalysisReference"))$("textbookAnalysisReference").onchange=()=>{
+  if(isRecording())return;
+  save('analysisReference',$("textbookAnalysisReference").value);
+  $("analysisReference").textContent="分析参考："+analysisReferenceLabel($("textbookAnalysisReference").value==="mine");
+  if(state.analysisView?.take)runSentenceAnalysis();
+};
 function closeSentenceAnalysis() {
   if(state.analysisView?.referenceURL)URL.revokeObjectURL(state.analysisView.referenceURL);
   if(state.analysisView?.rerecording&&isRecording()) {$("analysisStatus").textContent="请先停止录音，保存后再关闭。";return;}
@@ -1523,6 +2008,7 @@ function startRecordingMeter(stream,recorder) {
   } catch {unavailable();}
 }
 async function startRecording(analysisView=null) {
+  myVoicePlayback?.stop();
   const report=message=>{notice(message);if(analysisView&&state.analysisView===analysisView)$("analysisStatus").textContent=message;};
   if(!state.item)return;
   const sentence=analysisView?.sentence||currentSentence();if(!sentence){notice("请先选择可跟读的句子。");return;}
@@ -1552,7 +2038,7 @@ async function startRecording(analysisView=null) {
         const id=crypto.randomUUID();
         const take={id,exercise,sentence,created:Date.now(),blob};
         const previous=[];
-        for(const source of sources)previous.push(...await dbRequest("readonly",store=>store.index("exercise").getAll(source.id)));
+        for(const source of sources)previous.push(...await TextbookSync.hydrateRecordings(await dbRequest("readonly",store=>store.index("exercise").getAll(source.id))));
         const matches=previous.filter(old=>old.sentence&&takeMatches(old,sentence)).sort((a,b)=>b.created-a.created);
         await TextbookSync.replaceRecording(take,matches);
         indexRecording(take);updateRecordingProgress();
@@ -1834,13 +2320,14 @@ $("voiceForm").onsubmit=event=>{
   if(!save("voiceProfiles:v2",JSON.stringify(draft.profiles))) {
     $("voiceNotice").textContent="本机保存失败，配音设置未更改。请清理存储后重试。";return;
   }
-  state.voiceProfiles=draft.profiles;
+  state.voiceProfiles=draft.profiles; myVoicePlayback?.stop();
   if(before!==JSON.stringify(assignedSettings())){cancelPlayback();clearAudio();}
   updateVoiceSummary();notice("通用配音与本课特殊设置已保存。");
   $("voiceDialog").close();
 };
 window.addEventListener("storage",event=>{
   if(event.key!==prefix+"voiceProfiles:v2"||!state.synthesis)return;
+  myVoicePlayback?.stop();
   const before=JSON.stringify(assignedSettings());state.voiceProfiles=null;
   if(before!==JSON.stringify(assignedSettings())){cancelPlayback();clearAudio();}
   updateVoiceSummary();
@@ -1873,6 +2360,10 @@ $("previewVoice").onclick=async()=>{
 $("voicePreview").addEventListener("ended",stopPreview);
 $("voicePreview").addEventListener("error",()=>{stopPreview();$("voiceNotice").textContent="试听音频无法播放，请重试。";});
 async function loadVoices() {
+  if(listeningMode){
+    $("engineStatus").textContent=window.TextbookOffline?"离线听力":"教材原音 · 本机分析";
+    return;
+  }
   try {
     const data=await api("/api/textbook/voices");state.voices=data.voices;$("speaker").replaceChildren();
     const seen=new Set();
@@ -1889,6 +2380,7 @@ async function loadVoices() {
     $("voiceSettings").disabled=!voice||Boolean(window.TextbookOffline);
     $("engineStatus").textContent=window.TextbookOffline?"离线教材":data.voices.length?"本地配音已连接":"未安装音色";
     $("play").disabled=!itemTurns().length||!state.voices.length;
+    updateMyVoiceTools();
   } catch {
     state.voices=[];$("voiceSettings").disabled=true;
     $("engineStatus").textContent="配音未连接 · 重试";$("play").disabled=true;
@@ -1945,20 +2437,45 @@ async function init() {
   if(markedMode&&new URL(location.href).searchParams.get("view")==="manage") {
     location.replace((window.TextbookOffline?"mobile-textbook-tags-manage.html":"textbook-tags-manage.html")+"?view=manage");return;
   }
+  if(listeningMode){
+    document.body.dataset.practice="listening";
+    document.querySelector(".brand").href=(window.TextbookOffline?"mobile-textbook.html":"textbook.html")+"?practice=listening";
+    document.querySelector(".brand span").textContent="N3 听力跟读";
+    document.querySelector(".sidebar .eyebrow").textContent="练习目录";
+    document.querySelector(".course-level-nav").hidden=true;
+    if($("textbookAnalysisReference"))$("textbookAnalysisReference").options[0].textContent="教材原音";
+    $("textbookPlaybackVoice").options[0].textContent="教材原音";
+    document.querySelector('label[for="textbookPlaybackVoice"]').textContent="播放声音";
+    if(window.TextbookOffline){
+      $("textbookVoiceTools").hidden=false;
+      $("textbookPlaybackVoice").value=playbackVoice;
+    }else $("textbookVoiceTools").querySelector(".muted").textContent="换声范围为本题全部句子，已生成的音频可直接复用。";
+    $("wholeListening").hidden=false;
+    $("wholeListening").onclick=playWholeListening;
+    if($("listeningLink")){
+      $("listeningLink").href="textbook.html";
+      $("listeningLink").textContent="教材跟读";
+    }
+    document.querySelector('[name="mode"][value="full"]').parentElement.lastChild.textContent="显示原文";
+    document.querySelector('[name="mode"][value="prompt"]').parentElement.lastChild.textContent="隐藏原文";
+  }
   icons();state.db=openDB();state.db.catch(()=>{});
   new ResizeObserver(()=>{
     document.documentElement.style.setProperty("--panel-height",document.querySelector(".playback-panel").offsetHeight+"px");
   }).observe(document.querySelector(".playback-panel"));
   try {
     const getCourse=window.TextbookOffline?TextbookOffline.fetch:fetch;
-    const catalogResponse=await getCourse("textbook-lessons.json?v=lessons-1-15-1");
-    if(!catalogResponse.ok)throw new Error("课程目录加载失败，请刷新重试。");
-    state.catalog=(await catalogResponse.json()).lessons;
+    if(listeningMode&&!window.TextbookOffline)state.catalog=[{id:"n3-listening-01",number:1,title:"听力原文",file:"/n3-listening/lesson.json",defaultItem:"n3-a03"}];
+    else{
+      const catalogResponse=await getCourse("textbook-lessons.json?v=lessons-1-15-1");
+      if(!catalogResponse.ok)throw new Error("课程目录加载失败，请刷新重试。");
+      state.catalog=(await catalogResponse.json()).lessons;
+    }
     if(!state.catalog.length){location.replace("mobile-textbook-library.html");return;}
     const {entry,hash}=routeLesson(state.catalog);
     $("lessonSelect").replaceChildren(...state.catalog.map(l=>new Option("第 "+l.number+" 课 · "+l.title,String(l.number))));
     $("lessonSelect").value=String(entry.number);
-    const response=await getCourse(entry.file+"?v=lessons-1-15-1");if(!response.ok)throw new Error("第"+entry.number+"课内容加载失败");
+    const response=await getCourse(entry.file+(listeningMode?"?v=n3-listening-4":"?v=lessons-1-15-1"));if(!response.ok)throw new Error("第"+entry.number+"课内容加载失败");
     const lesson=await response.json();
     if(lesson.id!==entry.id||!Array.isArray(lesson.items)||!lesson.items.length)throw new Error("课程内容不完整，请刷新重试。");
     state.lesson=lesson;
@@ -1972,7 +2489,7 @@ async function init() {
     }));
     const number=document.createElement("span");number.textContent=String(lesson.number).padStart(2,"0");
     $("lessonHeading").replaceChildren(number,document.createTextNode(" "+lesson.title));
-    document.title="第"+lesson.number+"课 · "+lesson.title+" · 教材跟读";
+    document.title=listeningMode?"N3 听力跟读":"第"+lesson.number+"课 · "+lesson.title+" · 教材跟读";
     save("lastLesson",String(lesson.number));$("lessonSelect").disabled=false;
     state.navMode=read("navMode:"+lesson.id,lesson.number===1?read("navMode"):"unit")==="recordings"?"recordings":"unit";
     const preferred=hash||read("lastItem:"+lesson.id,lesson.number===1?read("lastItem",entry.defaultItem):entry.defaultItem);
@@ -1989,3 +2506,27 @@ async function init() {
   } catch(e){$("exerciseTitle").textContent="无法打开课程";notice(e.message);}
 }
 init();
+
+window.MyVoiceContext = {
+  getSource: async ({prepare = false} = {}) => {
+    const view = $("analysisDialog").open && state.analysisView;
+    const sentence = view?.sentence || currentSentence();
+    const label = sentence ? `${listeningMode?state.item.unit:`第${state.lesson.number}课`} · ${sentence.role}：${sentence.text}` : "当前句标准原音";
+    if (view?.analysis?.reference?.audio_url)
+      return {url:view.referenceURL||view.analysis.reference.audio_url,label};
+    if (sentence?.reference)return {url:(await audioFor(sentence)).audio_url,label};
+    if (!sentence?.settings) throw new Error("请先选择并播放当前句标准发音，或上传日语原音。");
+    const prepared = state.cache.get(JSON.stringify([sentence.text, sentence.settings]));
+    if (prepared) return {url:(await prepared).audio_url,label};
+    if (prepare) return {url:(await audioFor({role:sentence.role,ja:sentence.text},sentence.settings)).audio_url,label};
+    const cached = await api("/api/textbook/tts", {text:sentence.text,...sentence.settings,cache_only:true});
+    if (!cached.available) throw new Error("请先播放当前句标准发音，或上传日语原音。");
+    return {url:cached.audio_url,label};
+  },
+  isRecording,
+  beforePlay: () => {
+    if (isRecording()) throw new Error("请先停止录音");
+    stopPreview(); cancelPlayback();
+    if ($("analysisDialog").open) $("analysisFrame").contentWindow?.postMessage({type:"textbook-analysis-pause"}, location.origin);
+  },
+};

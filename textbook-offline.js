@@ -5,7 +5,14 @@ window.TextbookOffline=(()=>{
   function url(path,blob){if(!urls.has(path))urls.set(path,URL.createObjectURL(blob));return urls.get(path);}
   async function fetchCourse(path){
     const rows=await all();
-    if(path.startsWith("textbook-lessons.json"))return new Response(JSON.stringify({lessons:rows.sort((a,b)=>a.course.number-b.course.number).map(({course:c})=>({id:c.id,number:c.number,title:c.title,file:c.id,defaultItem:c.items[0].id}))}));
+    if(path.startsWith("textbook-lessons.json")){
+      const listening=new URLSearchParams(location.search).get("practice")==="listening";
+      const catalogue=location.pathname.endsWith("/mobile-textbook.html")
+        ? rows.filter(row=>(row.id==="n3-listening-01")===listening) : rows;
+      const lessons=catalogue.sort((a,b)=>a.course.number-b.course.number)
+        .map(({course:c})=>({id:c.id,number:c.number,title:c.title,file:c.id,defaultItem:c.items[0].id}));
+      return new Response(JSON.stringify({lessons}));
+    }
     const row=rows.find(r=>r.id===path.split("?")[0]);if(!row)return new Response("",{status:404});
     const course=structuredClone(row.course);
     for(const item of course.items){
@@ -26,10 +33,14 @@ window.TextbookOffline=(()=>{
     }
     throw new Error("此功能需在电脑上使用。");
   }
-  async function audioFor(turn){
-    const rows=await all(),row=rows.find(r=>r.files[turn.offlineAudio]);
+  async function audioFile(path){
+    const rows=await all(),row=rows.find(r=>r.files[path]);
     if(!row)throw new Error("这句未包含已生成的音频，请在电脑导出后更新课程。");
-    return {audio_url:url(row.id+turn.offlineAudio,row.files[turn.offlineAudio])};
+    return url(row.id+path,row.files[path]);
+  }
+  async function audioFor(turn,useMyVoice=false){
+    const path=useMyVoice&&turn.offlineMyVoice||turn.offlineAudio;
+    return {audio_url:await audioFile(path),usedMyVoice:useMyVoice&&Boolean(turn.offlineMyVoice)};
   }
   document.addEventListener("DOMContentLoaded",()=>{
     document.querySelectorAll('a[href="textbook.html"]').forEach(a=>a.href="mobile-textbook.html");
@@ -38,5 +49,5 @@ window.TextbookOffline=(()=>{
     document.getElementById("sourceButton")?.addEventListener("click",()=>{if(!state.item?.image){$("sourceDialog").close();notice("此包未包含教材原页。");}});
     if("serviceWorker"in navigator)navigator.serviceWorker.register("mobile-sw.js").catch(()=>{});
   });
-  return {fetch:fetchCourse,api,audioFor};
+  return {fetch:fetchCourse,api,audioFor,audioFile};
 })();

@@ -5,8 +5,9 @@
     const rows=await TextbookPackage.request("readonly",s=>s.getAll());$("courseLibrary").replaceChildren();
     if(!rows.length)$("courseLibrary").append(el("p","暂无课程"));
     for(const row of rows.sort((a,b)=>a.course.number-b.course.number)){
-      const section=el("section"),heading=el("h2"),open=el("a",`第 ${row.course.number} 课 · ${row.course.title}`);
-      open.href="mobile-textbook.html?lesson="+row.course.number;heading.append(open);
+      const listening=row.id==="n3-listening-01";
+      const section=el("section"),heading=el("h2"),open=el("a",listening?"N3 听力跟读":`第 ${row.course.number} 课 · ${row.course.title}`);
+      open.href="mobile-textbook.html?"+(listening?"practice=listening":"lesson="+row.course.number);heading.append(open);
       const meta=el("p",`${row.course.items.length} 个练习 · ${(row.size/1024**2).toFixed(1)} MB`);
       const details=el("details"),summary=el("summary","更多"),remove=el("button","删除课程包");
       remove.className="text-button";remove.onclick=async()=>{
