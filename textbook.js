@@ -757,6 +757,7 @@ async function playTurn(index, {whole=false}={}) {
   if(isRecording()) { notice("录音中，停止后可以播放。"); return; }
   stopPreview();
   const turns=itemTurns(); if(!turns[index]||(!listeningMode&&!state.voices.length))return;
+  window.TextbookVolume?.prepare(audio);
   const generation=++state.epoch; audio.pause(); $("recordedAudio").pause();
   state.listeningWhole=whole;
   state.turn=index; state.playing=true; state.pending=true; state.loadedKey="";
@@ -788,6 +789,7 @@ $("play").onclick=async()=>{
   if(state.playing) { cancelPlayback(); return; }
   if(state.listeningWhole){playWholeListening();return;}
   if(state.loadedKey===turnKey()&&audio.getAttribute("src")&&!audio.ended) {
+    window.TextbookVolume?.prepare(audio);
     $("recordedAudio").pause(); state.playing=true; updatePlayButton();
     try { applyPlaybackSpeed(); await audio.play(); notice(""); } catch(e) { cancelPlayback(); notice(e.message); }
   } else playTurn(state.turn);
@@ -830,6 +832,7 @@ audio.addEventListener("error",()=>{
 async function playWholeListening(){
   if(!(state.item?.track||state.item?.offlineTrack)||isRecording())return;
   if(state.listeningWhole&&state.playing){cancelPlayback();return;}
+  window.TextbookVolume?.prepare(audio);
   if(playbackVoice==="mine"){
     const loaded=state.loadedKey===turnKey()&&audio.getAttribute("src");
     if(!state.listeningWhole||!loaded||audio.ended){

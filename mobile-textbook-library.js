@@ -1,6 +1,7 @@
 "use strict";
 (()=>{
   const $=id=>document.getElementById(id),el=(tag,text)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;return e;};
+  window.TextbookVolume?.addControls($("libraryVolume"));
   async function render(){
     const rows=await TextbookPackage.request("readonly",s=>s.getAll());$("courseLibrary").replaceChildren();
     if(!rows.length)$("courseLibrary").append(el("p","暂无课程"));

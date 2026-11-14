@@ -1,7 +1,8 @@
-const CACHE_NAME = "tokyo-shadowing-mobile-v83-n3";
+const CACHE_NAME = "tokyo-shadowing-mobile-v84-textbook-volume";
 const BASE_URL = new URL("./", self.location.href);
 const APP_SHELL_PATHS = [
-  "textbook-phone-ui.js?v=transfer-ui-3",
+  "textbook-phone-ui.js?v=volume-1",
+  "textbook-volume.js?v=1",
   "mobile.html",
   "mobile.css?v=20260916-02",
   "mobile-package.js?v=20260915-02",
@@ -14,7 +15,7 @@ const APP_SHELL_PATHS = [
   "manifest.webmanifest",
   "favicon.svg",
   "mobile-textbook-library.html",
-  "mobile-textbook-library.js?v=n3-mobile-1",
+  "mobile-textbook-library.js?v=volume-1",
   "mobile-textbook.html",
   "mobile-textbook-marks.html",
   "mobile-textbook-tags-manage.html",
@@ -24,7 +25,7 @@ const APP_SHELL_PATHS = [
   "textbook-sync.js?v=n3-mobile-1",
   "textbook-offline.js?v=n3-mobile-1",
   "textbook-transfer.js?v=n3-mobile-1",
-  "textbook.js?v=n3-mobile-1",
+  "textbook.js?v=mobile-volume-1",
   "textbook.css?v=n3-mobile-1",
   "textbook-sync.js?v=calibration-81",
   "textbook-calibration.js?v=calibration-81",
@@ -40,6 +41,7 @@ const APP_SHELL_PATHS = [
   "textbook.css?v=shared-voices-1",
   "textbook-tags.css?v=2",
   "textbook-mobile.css?v=1",
+  "textbook-mobile.css?v=volume-1",
   "textbook-assets/lucide.js",
 ];
 const APP_SHELL = APP_SHELL_PATHS.map((path) => new URL(path, BASE_URL).href);
